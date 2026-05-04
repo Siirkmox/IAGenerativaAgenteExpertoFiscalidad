@@ -1,10 +1,11 @@
 import datetime
+import json
 import os
 import re
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Literal, TypedDict
+from typing import Annotated, Literal, Optional, TypedDict
 
 import numpy as np
 import operator
@@ -14,6 +15,8 @@ from dotenv import load_dotenv
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
 from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage, SystemMessage
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
@@ -219,6 +222,37 @@ def moderar_pregunta(texto: str, llm) -> ResultadoModeracion:
         content="Clasifica esta pregunta como 'fiscal' o 'offtopic'. Responde SOLO con una palabra.\n\nPregunta: " + texto
     )]).content.strip().lower()
     return ResultadoModeracion("fiscal" if "fiscal" in raw else "offtopic", "llm", 0.6)
+
+
+# ── LLM-as-Judge ──────────────────────────────────────────────────────────────
+
+_PROMPT_JUEZ = ChatPromptTemplate.from_template("""
+Eres un evaluador experto en asesoría fiscal española.
+Evalúa la calidad de esta respuesta según los criterios dados.
+
+**Pregunta:** {pregunta}
+**Respuesta a evaluar:** {respuesta}
+**Criterios:** {criterios}
+
+Responde ÚNICAMENTE con este JSON (sin markdown):
+{{
+  "puntuacion_global": número entre 1 y 10,
+  "precision_tecnica": número entre 1 y 10,
+  "claridad": número entre 1 y 10,
+  "completitud": número entre 1 y 10,
+  "justificacion": "máximo 2 oraciones"
+}}
+""")
+
+def evaluar_respuesta(pregunta: str, respuesta: str, llm) -> Optional[dict]:
+    criterios = "precisión de fechas y plazos, claridad de la explicación, completitud según el perfil del usuario"
+    try:
+        raw = (_PROMPT_JUEZ | llm | StrOutputParser()).invoke({
+            "pregunta": pregunta, "respuesta": respuesta, "criterios": criterios,
+        })
+        return json.loads(raw.strip().replace("```json", "").replace("```", "").strip())
+    except Exception:
+        return None
 
 
 # ── Indexación de documentos ───────────────────────────────────────────────────
@@ -481,6 +515,8 @@ with st.sidebar:
     perfil_map          = {"Sin especificar": "", "Autónomo": "autonomo", "Sociedad": "sociedad"}
     perfil_seleccionado = perfil_map[perfil_opcion]
 
+    mostrar_evaluacion = st.toggle("Mostrar evaluación de respuestas", value=False)
+
     if st.button("🔄 Nueva conversación"):
         st.session_state.messages    = []
         st.session_state.agent_state = {
@@ -512,6 +548,14 @@ with tab_chat:
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
+            if msg.get("evaluacion") and mostrar_evaluacion:
+                ev = msg["evaluacion"]
+                with st.expander(f"Evaluación — {ev.get('puntuacion_global', '-')}/10"):
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("Precisión",   f"{ev.get('precision_tecnica', '-')}/10")
+                    c2.metric("Claridad",    f"{ev.get('claridad', '-')}/10")
+                    c3.metric("Completitud", f"{ev.get('completitud', '-')}/10")
+                    st.caption(ev.get("justificacion", ""))
 
     pregunta = st.chat_input("Escribe tu pregunta fiscal...")
 
@@ -530,6 +574,7 @@ with tab_chat:
             )
             with st.chat_message("assistant"):
                 st.markdown(respuesta)
+            st.session_state.messages.append({"role": "assistant", "content": respuesta})
         else:
             with st.chat_message("assistant"):
                 with st.spinner("Consultando la base de conocimiento..."):
@@ -541,7 +586,22 @@ with tab_chat:
                     respuesta = result["messages"][-1].content
                 st.markdown(respuesta)
 
-        st.session_state.messages.append({"role": "assistant", "content": respuesta})
+                evaluacion = None
+                if mostrar_evaluacion:
+                    with st.spinner("Evaluando calidad..."):
+                        evaluacion = evaluar_respuesta(pregunta, respuesta, llm)
+                    if evaluacion:
+                        with st.expander(f"Evaluación — {evaluacion.get('puntuacion_global', '-')}/10"):
+                            c1, c2, c3 = st.columns(3)
+                            c1.metric("Precisión",   f"{evaluacion.get('precision_tecnica', '-')}/10")
+                            c2.metric("Claridad",    f"{evaluacion.get('claridad', '-')}/10")
+                            c3.metric("Completitud", f"{evaluacion.get('completitud', '-')}/10")
+                            st.caption(evaluacion.get("justificacion", ""))
+
+            st.session_state.messages.append({
+                "role": "assistant", "content": respuesta, "evaluacion": evaluacion,
+            })
+
         st.rerun()
 
 with tab_calendario:
