@@ -27,7 +27,13 @@ from sklearn.pipeline import Pipeline
 # ── Configuración ──────────────────────────────────────────────────────────────
 
 load_dotenv()
-GOOGLE_API_KEY  = st.secrets.get("GOOGLE_API_KEY", os.getenv("GOOGLE_API_KEY"))
+GOOGLE_API_KEYS = [
+    st.secrets.get("GOOGLE_API_KEY",   os.getenv("GOOGLE_API_KEY")),
+    st.secrets.get("GOOGLE_API_KEY_2", os.getenv("GOOGLE_API_KEY_2")),
+    st.secrets.get("GOOGLE_API_KEY_3", os.getenv("GOOGLE_API_KEY_3")),
+]
+GOOGLE_API_KEYS = [k for k in GOOGLE_API_KEYS if k]  # elimina vacías/None
+
 CHROMA_DIR      = "chroma_db"
 COLLECTION_NAME = "base_fiscal"
 MAX_MESSAGES    = 10
@@ -471,6 +477,32 @@ _KEYWORDS_DOCS = re.compile(
     re.IGNORECASE,
 )
 
+def _crear_llm(claves: list) -> ChatGoogleGenerativeAI:
+    """Prueba las claves en orden y devuelve el LLM con la primera que funcione."""
+    if not claves:
+        raise RuntimeError("No hay ninguna GOOGLE_API_KEY configurada.")
+    ultimo_error = None
+    for i, clave in enumerate(claves):
+        try:
+            llm = ChatGoogleGenerativeAI(
+                model="gemini-2.5-flash",
+                google_api_key=clave,
+                temperature=0,
+            )
+            llm.invoke([HumanMessage(content="ok")])
+            if i > 0:
+                st.info(f"Usando clave API {i + 1} (las anteriores están agotadas).")
+            return llm
+        except Exception as e:
+            if "RESOURCE_EXHAUSTED" in str(e) or "429" in str(e):
+                ultimo_error = e
+                continue
+            raise
+    raise RuntimeError(
+        f"Todas las claves de API están agotadas (429). Prueba mañana o añade otra clave.\n{ultimo_error}"
+    )
+
+
 @st.cache_resource(show_spinner="Cargando base de conocimiento fiscal...")
 def cargar_recursos():
     embeddings = HuggingFaceEmbeddings(
@@ -486,11 +518,7 @@ def cargar_recursos():
         with st.spinner("Primera ejecución: indexando documentos (puede tardar unos minutos)..."):
             vectorstore = _indexar_documentos(embeddings)
 
-    llm = ChatGoogleGenerativeAI(
-        model="gemini-2.5-flash",
-        google_api_key=GOOGLE_API_KEY,
-        temperature=0,
-    )
+    llm = _crear_llm(GOOGLE_API_KEYS)
 
     class AgentState(TypedDict):
         messages:      Annotated[list, operator.add]
