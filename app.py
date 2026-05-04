@@ -392,37 +392,27 @@ with tab_calendario:
     df_vis["_dias_restantes"] = (df_vis["fecha_limite_2026"].dt.date - hoy).apply(lambda d: d.days)
     df_vis = df_vis.reset_index(drop=True)
 
-    columnas_vis = {
-        "modelo": "Modelo",
-        "nombre": "Obligación",
-        "perfil": "Perfil",
-        "fecha_limite_2026": "Fecha límite",
-        "domiciliacion_hasta": "Domiciliación hasta",
-        "dias_preparacion_recomendados": "Días preparación",
-        "periodicidad": "Periodicidad",
-    }
-    df_show = df_vis[list(columnas_vis.keys())].rename(columns=columnas_vis).copy()
-    df_show["Fecha límite"] = df_show["Fecha límite"].dt.strftime("%d/%m/%Y")
-    df_show["Domiciliación hasta"] = df_show["Domiciliación hasta"].apply(
-        lambda x: x.strftime("%d/%m/%Y") if pd.notna(x) else "—"
-    )
-    dias = df_vis["_dias_restantes"]
-
-    def color_fila(row):
-        d = dias[row.name]
-        if 0 <= d <= 7:
-            bg = "background-color: #ffe0e0"
-        elif 0 <= d <= 30:
-            bg = "background-color: #fff3cd"
-        elif d < 0:
-            bg = "background-color: #f0f0f0"
+    def estado(d):
+        if d < 0:
+            return "✅ Vencido"
+        elif d <= 7:
+            return "🔴 ≤ 7 días"
+        elif d <= 30:
+            return "🟡 ≤ 30 días"
         else:
-            bg = ""
-        return [bg] * len(row)
+            return "🟢 Pendiente"
 
-    st.caption("🔴 Vence en ≤ 7 días · 🟡 Vence en ≤ 30 días · ⬜ Ya vencido")
-    st.dataframe(
-        df_show.style.apply(color_fila, axis=1),
-        use_container_width=True,
-        hide_index=True,
-    )
+    df_show = pd.DataFrame({
+        "Estado": df_vis["_dias_restantes"].apply(estado),
+        "Modelo": df_vis["modelo"],
+        "Obligación": df_vis["nombre"],
+        "Perfil": df_vis["perfil"],
+        "Fecha límite": df_vis["fecha_limite_2026"].dt.strftime("%d/%m/%Y"),
+        "Domiciliación hasta": df_vis["domiciliacion_hasta"].apply(
+            lambda x: x.strftime("%d/%m/%Y") if pd.notna(x) else "—"
+        ),
+        "Días preparación": df_vis["dias_preparacion_recomendados"],
+        "Periodicidad": df_vis["periodicidad"],
+    })
+
+    st.dataframe(df_show, use_container_width=True, hide_index=True)
