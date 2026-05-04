@@ -1,7 +1,9 @@
+import datetime
 import os
 import uuid
 from pathlib import Path
 
+import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
 from langchain_community.embeddings import HuggingFaceEmbeddings
@@ -284,6 +286,8 @@ st.set_page_config(
 st.title("📋 Asistente Fiscal GestorIA")
 st.caption("Asesor fiscal para autónomos y sociedades en España · Powered by Gemini + RAG")
 
+tab_chat, tab_calendario = st.tabs(["💬 Asistente", "📅 Calendario Fiscal"])
+
 # Selector de perfil en la barra lateral
 with st.sidebar:
     st.header("Configuración")
@@ -321,36 +325,104 @@ if "agent_state" not in st.session_state:
 if st.session_state.agent_state.get("perfil") != perfil_seleccionado and not st.session_state.messages:
     st.session_state.agent_state["perfil"] = perfil_seleccionado
 
-# Mostrar historial de mensajes
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
-
 # Cargar el agente
 agente = cargar_recursos()
 
-# Input del usuario — formulario estable compatible con Python 3.14
-with st.form(key="chat_form", clear_on_submit=True):
-    pregunta = st.text_input("Escribe tu pregunta fiscal...", key="input_pregunta")
-    enviar = st.form_submit_button("Enviar")
+with tab_chat:
+    # Mostrar historial de mensajes
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
 
-if enviar and pregunta.strip():
-    st.session_state.messages.append({"role": "user", "content": pregunta})
-    with st.chat_message("user"):
-        st.markdown(pregunta)
+    # Input del usuario — formulario estable compatible con Python 3.14
+    with st.form(key="chat_form", clear_on_submit=True):
+        pregunta = st.text_input("Escribe tu pregunta fiscal...", key="input_pregunta")
+        enviar = st.form_submit_button("Enviar")
 
-    with st.chat_message("assistant"):
-        with st.spinner("Consultando la base de conocimiento..."):
-            state = st.session_state.agent_state
-            state["messages"] = state.get("messages", []) + [HumanMessage(content=pregunta)]
+    if enviar and pregunta.strip():
+        st.session_state.messages.append({"role": "user", "content": pregunta})
+        with st.chat_message("user"):
+            st.markdown(pregunta)
 
-            config = {"configurable": {"thread_id": st.session_state.thread_id}}
-            result = agente.invoke(state, config=config)
+        with st.chat_message("assistant"):
+            with st.spinner("Consultando la base de conocimiento..."):
+                state = st.session_state.agent_state
+                state["messages"] = state.get("messages", []) + [HumanMessage(content=pregunta)]
 
-            st.session_state.agent_state = result
-            respuesta = result["messages"][-1].content
+                config = {"configurable": {"thread_id": st.session_state.thread_id}}
+                result = agente.invoke(state, config=config)
 
-        st.markdown(respuesta)
+                st.session_state.agent_state = result
+                respuesta = result["messages"][-1].content
 
-    st.session_state.messages.append({"role": "assistant", "content": respuesta})
-    st.rerun()
+            st.markdown(respuesta)
+
+        st.session_state.messages.append({"role": "assistant", "content": respuesta})
+        st.rerun()
+
+with tab_calendario:
+    st.subheader("Calendario de obligaciones fiscales 2026")
+
+    @st.cache_data
+    def cargar_calendario():
+        df = pd.read_csv(BASE_DIR / "data/calendario_fiscal.csv")
+        df["fecha_limite_2026"] = pd.to_datetime(df["fecha_limite_2026"])
+        df["domiciliacion_hasta"] = pd.to_datetime(df["domiciliacion_hasta"], errors="coerce")
+        return df.sort_values("fecha_limite_2026")
+
+    df_cal = cargar_calendario()
+
+    # Filtro de perfil
+    opciones_perfil = {"Todos": None, "Autónomo": "autonomo", "Sociedad": "sociedad"}
+    perfil_filtro = st.radio(
+        "Mostrar obligaciones de:",
+        options=list(opciones_perfil.keys()),
+        index={"": 0, "autonomo": 1, "sociedad": 2}.get(perfil_seleccionado, 0),
+        horizontal=True
+    )
+    valor_filtro = opciones_perfil[perfil_filtro]
+
+    if valor_filtro:
+        df_vis = df_cal[df_cal["perfil"].isin([valor_filtro, "ambos"])].copy()
+    else:
+        df_vis = df_cal.copy()
+
+    # Destacar vencimientos próximos (≤ 30 días desde hoy)
+    hoy = datetime.date.today()
+    df_vis["_dias_restantes"] = (df_vis["fecha_limite_2026"].dt.date - hoy).apply(lambda d: d.days)
+    df_vis = df_vis.reset_index(drop=True)
+
+    columnas_vis = {
+        "modelo": "Modelo",
+        "nombre": "Obligación",
+        "perfil": "Perfil",
+        "fecha_limite_2026": "Fecha límite",
+        "domiciliacion_hasta": "Domiciliación hasta",
+        "dias_preparacion_recomendados": "Días preparación",
+        "periodicidad": "Periodicidad",
+    }
+    df_show = df_vis[list(columnas_vis.keys())].rename(columns=columnas_vis).copy()
+    df_show["Fecha límite"] = df_show["Fecha límite"].dt.strftime("%d/%m/%Y")
+    df_show["Domiciliación hasta"] = df_show["Domiciliación hasta"].apply(
+        lambda x: x.strftime("%d/%m/%Y") if pd.notna(x) else "—"
+    )
+    dias = df_vis["_dias_restantes"]
+
+    def color_fila(row):
+        d = dias[row.name]
+        if 0 <= d <= 7:
+            bg = "background-color: #ffe0e0"
+        elif 0 <= d <= 30:
+            bg = "background-color: #fff3cd"
+        elif d < 0:
+            bg = "background-color: #f0f0f0"
+        else:
+            bg = ""
+        return [bg] * len(row)
+
+    st.caption("🔴 Vence en ≤ 7 días · 🟡 Vence en ≤ 30 días · ⬜ Ya vencido")
+    st.dataframe(
+        df_show.style.apply(color_fila, axis=1),
+        use_container_width=True,
+        hide_index=True,
+    )
