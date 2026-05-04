@@ -342,12 +342,10 @@ with tab_chat:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    # Input del usuario — formulario estable compatible con Python 3.14
-    with st.form(key="chat_form", clear_on_submit=True):
-        pregunta = st.text_input("Escribe tu pregunta fiscal...", key="input_pregunta")
-        enviar = st.form_submit_button("Enviar")
+    # chat_input siempre se ancla al fondo de la pantalla
+    pregunta = st.chat_input("Escribe tu pregunta fiscal...")
 
-    if enviar and pregunta.strip():
+    if pregunta and pregunta.strip():
         st.session_state.messages.append({"role": "user", "content": pregunta})
         with st.chat_message("user"):
             st.markdown(pregunta)
