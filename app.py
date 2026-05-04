@@ -2,6 +2,7 @@ import datetime
 import json
 import os
 import re
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -361,7 +362,7 @@ def moderar_pregunta(texto: str, llm) -> ResultadoModeracion:
     if confianza >= UMBRAL_CONFIANZA_ML:
         return ResultadoModeracion(clf.classes_[idx_max], "ml", confianza)
     # Capa 3: LLM solo para casos ambiguos
-    raw = llm.invoke([HumanMessage(
+    raw = _invoke_con_retry(llm, [HumanMessage(
         content="Clasifica esta pregunta como 'fiscal' o 'offtopic'. Responde SOLO con una palabra.\n\nPregunta: " + texto
     )]).content.strip().lower()
     return ResultadoModeracion("fiscal" if "fiscal" in raw else "offtopic", "llm", 0.6)
@@ -390,9 +391,10 @@ Responde ÚNICAMENTE con este JSON (sin markdown):
 def evaluar_respuesta(pregunta: str, respuesta: str, llm) -> Optional[dict]:
     criterios = "precisión de fechas y plazos, claridad de la explicación, completitud según el perfil del usuario"
     try:
-        raw = (_PROMPT_JUEZ | llm | StrOutputParser()).invoke({
-            "pregunta": pregunta, "respuesta": respuesta, "criterios": criterios,
-        })
+        prompt_messages = _PROMPT_JUEZ.format_messages(
+            pregunta=pregunta, respuesta=respuesta, criterios=criterios
+        )
+        raw = _invoke_con_retry(llm, prompt_messages).content
         return json.loads(raw.strip().replace("```json", "").replace("```", "").strip())
     except Exception:
         return None
@@ -477,30 +479,76 @@ _KEYWORDS_DOCS = re.compile(
     re.IGNORECASE,
 )
 
-def _crear_llm(claves: list) -> ChatGoogleGenerativeAI:
-    """Prueba las claves en orden y devuelve el LLM con la primera que funcione."""
-    if not claves:
-        raise RuntimeError("No hay ninguna GOOGLE_API_KEY configurada.")
-    ultimo_error = None
-    for i, clave in enumerate(claves):
+MAX_RETRIES_RPM = 5
+
+def _extraer_retry_delay(error_str: str, default: float = 15.0) -> float:
+    match = re.search(r"retryDelay.*?(\d+(?:\.\d+)?)\s*s", error_str)
+    return float(match.group(1)) + 1 if match else default
+
+def _es_limite_diario(err: str) -> bool:
+    return "GenerateRequestsPerDayPerProjectPerModel" in err
+
+def _es_limite_rpm(err: str) -> bool:
+    return "GenerateRequestsPerMinutePerProjectPerModel" in err
+
+# Estado global de clave activa (permite rotar en caliente durante la sesión)
+_estado_claves = {"idx": 0}
+
+def _crear_llm_para_clave(idx: int) -> ChatGoogleGenerativeAI:
+    return ChatGoogleGenerativeAI(
+        model="gemini-2.5-flash",
+        google_api_key=GOOGLE_API_KEYS[idx],
+        temperature=0,
+    )
+
+def _invoke_con_retry(llm_obj, messages: list):
+    """Invoca el LLM con retry RPM y fallback a siguiente clave ante límite diario."""
+    for _ in range(MAX_RETRIES_RPM + len(GOOGLE_API_KEYS)):
         try:
-            llm = ChatGoogleGenerativeAI(
-                model="gemini-2.5-flash",
-                google_api_key=clave,
-                temperature=0,
-            )
-            llm.invoke([HumanMessage(content="ok")])
-            if i > 0:
-                st.info(f"Usando clave API {i + 1} (las anteriores están agotadas).")
-            return llm
+            return llm_obj.invoke(messages)
         except Exception as e:
-            if "RESOURCE_EXHAUSTED" in str(e) or "429" in str(e):
-                ultimo_error = e
+            err = str(e)
+            if "RESOURCE_EXHAUSTED" not in err and "429" not in err:
+                raise
+            if _es_limite_rpm(err):
+                delay = _extraer_retry_delay(err)
+                time.sleep(delay)
+                continue
+            if _es_limite_diario(err):
+                idx_nuevo = _estado_claves["idx"] + 1
+                if idx_nuevo >= len(GOOGLE_API_KEYS):
+                    raise RuntimeError("Todas las claves de API están agotadas (límite diario).") from e
+                st.warning(f"Clave API {_estado_claves['idx'] + 1} agotada — cambiando a clave {idx_nuevo + 1}...")
+                _estado_claves["idx"] = idx_nuevo
+                llm_obj = _crear_llm_para_clave(idx_nuevo)
                 continue
             raise
-    raise RuntimeError(
-        f"Todas las claves de API están agotadas (429). Prueba mañana o añade otra clave.\n{ultimo_error}"
-    )
+    raise RuntimeError("Se agotaron los reintentos de la API.")
+
+def _inicializar_llm(claves: list) -> ChatGoogleGenerativeAI:
+    """Prueba las claves en orden al arrancar y devuelve el LLM con la primera disponible."""
+    if not claves:
+        raise RuntimeError("No hay ninguna GOOGLE_API_KEY configurada.")
+    for i in range(len(claves)):
+        for _ in range(MAX_RETRIES_RPM):
+            try:
+                llm_test = _crear_llm_para_clave(i)
+                llm_test.invoke([HumanMessage(content="ok")])
+                if i > 0:
+                    st.info(f"Usando clave API {i + 1} (las anteriores están agotadas).")
+                _estado_claves["idx"] = i
+                return llm_test
+            except Exception as e:
+                err = str(e)
+                if "RESOURCE_EXHAUSTED" not in err and "429" not in err:
+                    raise
+                if _es_limite_diario(err):
+                    break
+                time.sleep(_extraer_retry_delay(err))
+        else:
+            continue
+        continue
+    raise RuntimeError("Todas las claves de API están agotadas al arrancar.")
 
 
 @st.cache_resource(show_spinner="Cargando base de conocimiento fiscal...")
@@ -518,7 +566,7 @@ def cargar_recursos():
         with st.spinner("Primera ejecución: indexando documentos (puede tardar unos minutos)..."):
             vectorstore = _indexar_documentos(embeddings)
 
-    llm = _crear_llm(GOOGLE_API_KEYS)
+    llm = _inicializar_llm(GOOGLE_API_KEYS)
 
     class AgentState(TypedDict):
         messages:      Annotated[list, operator.add]
@@ -619,13 +667,13 @@ def cargar_recursos():
             perfil_linea = f"Perfil del cliente: {label}\n"
 
         messages = [SystemMessage(content=SYSTEM_PROMPT)]
-        messages += historial[:-1]
+        messages += [m for m in historial[:-1] if not isinstance(m, RemoveMessage)]
         messages.append(HumanMessage(content=(
             f"{contexto_temporal}{perfil_linea}"
             f"Contexto recuperado de la base de conocimiento:\n---\n{contexto}\n---\n\n"
             f"Pregunta del usuario: {historial[-1].content}"
         )))
-        respuesta = llm.invoke(messages)
+        respuesta = _invoke_con_retry(llm, messages)
 
         perfil_actual = state.get("perfil", "")
         if not perfil_actual:
