@@ -62,9 +62,8 @@ El idioma de los documentos recuperados (contexto) NO influye en tu idioma de re
 
 ## REGLA DE ORO: NO ALUCINACIONES
 
-- Usa ÚNICAMENTE la información que aparece literalmente en el contexto proporcionado.
-- Si un dato concreto (fecha, casilla, porcentaje, plazo) no aparece textualmente en el contexto, NO lo inventes ni lo inferias.
-- En ese caso responde exactamente: "No dispongo de información suficiente sobre este punto en mi base de conocimiento. Te recomiendo consultar la sede electrónica de la AEAT (sede.agenciatributaria.gob.es) o al gestor responsable."
+- Para datos concretos y verificables (fechas, casillas, porcentajes, plazos exactos): usa ÚNICAMENTE lo que aparece en el contexto proporcionado. Si no está, responde: "No dispongo de información suficiente sobre este punto en mi base de conocimiento. Te recomiendo consultar la sede electrónica de la AEAT (sede.agenciatributaria.gob.es) o al gestor responsable."
+- Para procedimientos y pasos generales de presentación telemática (acceso a Cl@ve, certificado digital, sede AEAT): puedes usar tu conocimiento como asesor fiscal, pero cita siempre la fuente ("Procedimiento estándar AEAT") y señala si el contexto RAG aporta información adicional.
 
 ## IDENTIFICACIÓN DE PERFIL
 
@@ -81,7 +80,7 @@ Organiza SIEMPRE tus respuestas en este orden:
 4. **Inicio de preparación recomendado** — fecha_limite menos dias_preparacion_recomendados del calendario.
 5. **Fuente** — cita el documento o fichero del que proviene cada dato.
 
-Si la pregunta no requiere todos los apartados (ej: solo pregunta por un plazo), omite los irrelevantes.
+Si la pregunta no requiere todos los apartados (ej: solo pregunta por un plazo o por pasos de presentación), omite los irrelevantes.
 
 ## PLAZOS Y ANTELACIÓN
 
@@ -149,6 +148,24 @@ Usuario: "¿Cuál es el tipo de recargo de equivalencia para el aceite de oliva?
 
 Respuesta:
 No dispongo de información suficiente sobre este punto en mi base de conocimiento. Te recomiendo consultar la sede electrónica de la AEAT (sede.agenciatributaria.gob.es) o al gestor responsable.
+
+---
+
+**Ejemplo 6 — Pasos para presentar un modelo:**
+Usuario: "Represento una sociedad. ¿Qué pasos debo seguir para presentar el IVA?"
+
+Respuesta:
+**Perfil:** Sociedad.
+**Pasos para presentar el Modelo 303 — Autoliquidación IVA:**
+
+1. **Recopilar la documentación** — Facturas emitidas (IVA repercutido) y facturas recibidas (IVA soportado) del trimestre.
+2. **Calcular el resultado** — IVA repercutido − IVA soportado deducible. Si el resultado es positivo, hay que ingresar; si es negativo, se puede solicitar compensación o devolución.
+3. **Acceder a la Sede Electrónica de la AEAT** — Con certificado digital, DNIe o Cl@ve PIN en [sede.agenciatributaria.gob.es](https://sede.agenciatributaria.gob.es).
+4. **Cumplimentar el formulario** — Ir a "Trámites destacados > Modelo 303". Rellenar las casillas correspondientes (01-09 para IVA devengado, 28-44 para IVA deducible).
+5. **Presentar y, si sale a ingresar, pagar** — Se puede domiciliar el pago hasta 5 días antes del plazo límite.
+6. **Guardar el justificante** — La AEAT emite un CSV de confirmación que es el acuse de recibo oficial.
+
+*Fuente: manual_iva_303_2025.pdf, procedimiento estándar AEAT*
 """
 
 # ── Moderación en cascada ──────────────────────────────────────────────────────
@@ -321,13 +338,16 @@ def _indexar_documentos(embeddings):
 # ── Agente LangGraph (cacheado) ────────────────────────────────────────────────
 
 _KEYWORDS_PLAZOS = re.compile(
-    r"\b(plazo|fecha|cuando|cuándo|vencimiento|trimestre|presentar|domicili|"
-    r"antelacion|antelación|pendiente|mes)\b",
+    r"\b(plazo|fecha|cuando|cuándo|vencimiento|trimestre|domicili|"
+    r"antelacion|antelación|pendiente)\b",
     re.IGNORECASE,
 )
 _KEYWORDS_DOCS = re.compile(
     r"\b(casilla|rellenar|cumplimentar|calcul|base imponible|deduccion|deducción|"
-    r"como se|cómo se|instruccion|instrucción|apartado|anexo)\b",
+    r"como se|cómo se|instruccion|instrucción|apartado|anexo|"
+    r"paso|pasos|proceso|procedimiento|"
+    r"c[oó]mo presento|c[oó]mo se presenta|c[oó]mo funciona|c[oó]mo hago|"
+    r"c[oó]mo debo|qué pasos|qu[eé] debo hacer)\b",
     re.IGNORECASE,
 )
 
@@ -371,10 +391,10 @@ def cargar_recursos():
     # ── Nodo: clasificación de consulta ──
     def clasificar_consulta(state: AgentState) -> AgentState:
         ultima = state["messages"][-1].content
-        if _KEYWORDS_PLAZOS.search(ultima):
-            tipo = "plazos"
-        elif _KEYWORDS_DOCS.search(ultima):
+        if _KEYWORDS_DOCS.search(ultima):
             tipo = "documentos"
+        elif _KEYWORDS_PLAZOS.search(ultima):
+            tipo = "plazos"
         else:
             tipo = "general"
         return {"tipo_consulta": tipo}
