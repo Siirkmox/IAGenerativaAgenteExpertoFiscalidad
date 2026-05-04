@@ -11,7 +11,7 @@ Agente de IA para gestorías españolas que asesora sobre obligaciones fiscales 
 | Base de conocimiento vectorial | ChromaDB |
 | Framework de agente | LangGraph + LangChain |
 | Entorno de desarrollo | Jupyter Notebook |
-| Interfaz (bonus) | Streamlit — desplegada en Streamlit Cloud |
+| Interfaz (bonus) | Streamlit — [desplegada en Streamlit Cloud](https://agentexpertofiscalidad.streamlit.app/) |
 
 > **Nota sobre embeddings:** Se usa el modelo multilingüe de HuggingFace en lugar de Gemini Embeddings por dos razones: (1) los documentos fiscales incluyen texto en catalán y valenciano extraído de los PDFs de la AEAT, y el modelo `paraphrase-multilingual-MiniLM-L12-v2` maneja mejor la mezcla de idiomas; (2) al ejecutarse localmente elimina una dependencia de API externa en la fase de indexación, reduciendo costes y latencia.
 
