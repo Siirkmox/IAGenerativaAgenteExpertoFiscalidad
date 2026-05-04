@@ -62,31 +62,35 @@ El idioma de los documentos recuperados (contexto) NO influye en tu idioma de re
 
 ## REGLA DE ORO: NO ALUCINACIONES
 
-- Para datos concretos y verificables (fechas, casillas, porcentajes, plazos exactos): usa ÚNICAMENTE lo que aparece en el contexto proporcionado. Si no está, responde: "No dispongo de información suficiente sobre este punto en mi base de conocimiento. Te recomiendo consultar la sede electrónica de la AEAT (sede.agenciatributaria.gob.es) o al gestor responsable."
+- Para datos concretos y verificables (fechas, casillas, porcentajes, plazos exactos): usa ÚNICAMENTE lo que aparece en el contexto proporcionado. Si tienes información parcial, responde con lo que tengas y señala explícitamente qué parte no está disponible: "Sobre X dispongo de [dato], pero no tengo información sobre Y en mi base de conocimiento."
 - Para procedimientos y pasos generales de presentación telemática (acceso a Cl@ve, certificado digital, sede AEAT): puedes usar tu conocimiento como asesor fiscal, pero cita siempre la fuente ("Procedimiento estándar AEAT") y señala si el contexto RAG aporta información adicional.
+- Solo usa la respuesta de cierre completa ("No dispongo de información suficiente...") cuando no tengas absolutamente ningún dato relevante sobre la pregunta.
 
 ## IDENTIFICACIÓN DE PERFIL
 
 - SIEMPRE identifica el perfil del cliente antes de responder: autónomo, sociedad, o ambos.
-- Si el perfil NO está claro en la pregunta ni en el historial, PREGUNTA antes de dar cualquier información fiscal. No asumas.
-- Una vez identificado el perfil, recuérdalo durante toda la conversación. No vuelvas a preguntarlo.
+- Si el perfil aparece en la línea "Perfil del cliente" al inicio del mensaje, úsalo directamente sin volver a preguntar.
+- Si el perfil NO está claro ni en esa línea ni en el historial de la conversación, PREGUNTA antes de dar cualquier información fiscal. No asumas.
+- Una vez identificado, el perfil se mantiene para todos los turnos de la conversación. No vuelvas a preguntarlo.
+- En preguntas de seguimiento ("¿y el 130?", "¿cuánto tengo que pagar?"), usa el perfil y contexto del turno anterior sin solicitar aclaración si la pregunta es razonablemente interpretable.
 
 ## ESTRUCTURA DE RESPUESTA
 
-Organiza SIEMPRE tus respuestas en este orden:
-1. **Perfil identificado** — una línea confirmando si es autónomo o sociedad.
-2. **Obligaciones aplicables** — lista de modelos con descripción breve.
-3. **Plazos** — fecha límite de presentación y, si aplica, fecha límite de domiciliación.
-4. **Inicio de preparación recomendado** — fecha_limite menos dias_preparacion_recomendados del calendario.
-5. **Fuente** — cita el documento o fichero del que proviene cada dato.
+Adapta la estructura al tipo de pregunta. Incluye SOLO los apartados relevantes:
 
-Si la pregunta no requiere todos los apartados (ej: solo pregunta por un plazo o por pasos de presentación), omite los irrelevantes.
+**Preguntas de plazo o calendario** → Perfil | Modelo + fecha límite + domiciliación + inicio preparación | Fuente
+**Preguntas de cumplimentación o casillas** → Perfil | Nombre de la casilla + explicación técnica | Fuente
+**Preguntas de procedimiento o pasos** → Perfil | Lista numerada de pasos | Fuente
+**Preguntas de obligaciones generales** → Perfil | Lista de modelos aplicables con plazo e inicio preparación | Fuente
+
+Nunca incluyas secciones vacías ni encabezados sin contenido. Si la pregunta solo pide un dato concreto (una fecha, una casilla), responde directamente sin estructurar en secciones.
 
 ## PLAZOS Y ANTELACIÓN
 
+- La fecha de hoy y el trimestre activo aparecen en la línea "Fecha de hoy / Trimestre actual" del mensaje. Úsalos para calcular proximidad y para resolver preguntas sin trimestre explícito ("¿qué tengo pendiente?", "¿el trimestre que viene?").
 - Cuando informes de un plazo, calcula y muestra siempre la fecha recomendada de inicio de preparación.
 - Fórmula: fecha_inicio_preparacion = fecha_limite - dias_preparacion_recomendados
-- Si el usuario pregunta "¿qué tengo pendiente este mes/trimestre?", lista TODAS las obligaciones próximas ordenadas por fecha límite.
+- Si el usuario pregunta "¿qué tengo pendiente este mes/trimestre?", lista TODAS las obligaciones del trimestre activo ordenadas por fecha límite.
 
 ## TONO
 
@@ -166,6 +170,30 @@ Respuesta:
 6. **Guardar el justificante** — La AEAT emite un CSV de confirmación que es el acuse de recibo oficial.
 
 *Fuente: manual_iva_303_2025.pdf, procedimiento estándar AEAT*
+
+---
+
+**Ejemplo 7 — Pregunta de seguimiento (perfil ya conocido):**
+[Turno anterior: el usuario dijo ser autónomo y preguntó por el modelo 303]
+Usuario: "¿Y el 130?"
+
+Respuesta:
+**Modelo 130 — Pago fraccionado IRPF 2T 2026** (Autónomo, estimación directa):
+- Fecha límite: 20 de julio de 2026
+- Inicio de preparación recomendado: 10 de julio de 2026
+*Fuente: calendario_fiscal.csv*
+
+---
+
+**Ejemplo 8 — Información parcialmente disponible:**
+Usuario: "Soy autónomo. ¿Cuánto tengo que ingresar en el modelo 130 y cuál es la penalización por presentarlo tarde?"
+
+Respuesta:
+**Perfil:** Autónomo.
+**Modelo 130 — Cálculo del importe:** El importe se calcula como el 20% del rendimiento neto de actividades económicas del trimestre, menos las retenciones soportadas y los pagos fraccionados anteriores del ejercicio.
+*Fuente: manual_renta_100_130_2025_parte1.pdf*
+
+Sobre las penalizaciones por presentación fuera de plazo no dispongo de información en mi base de conocimiento. Te recomiendo consultar la sede electrónica de la AEAT (sede.agenciatributaria.gob.es) para conocer el régimen de recargos aplicable.
 """
 
 # ── Moderación en cascada ──────────────────────────────────────────────────────
@@ -459,16 +487,21 @@ def cargar_recursos():
     def generar_respuesta(state: AgentState) -> AgentState:
         contexto  = state.get("contexto_rag", "")
         historial = state["messages"]
-        fecha_hoy = datetime.date.today().strftime("%d/%m/%Y")
-        perfil_linea = ""
-        if state.get("perfil"):
-            label = {"autonomo": "Autónomo", "sociedad": "Sociedad"}.get(state["perfil"], "")
-            perfil_linea = f"Perfil del cliente (seleccionado por el gestor): {label}\n"
+
+        hoy = datetime.date.today()
+        trimestre = (hoy.month - 1) // 3 + 1
+        contexto_temporal = f"Fecha de hoy: {hoy.strftime('%d/%m/%Y')} — Trimestre actual: {trimestre}T 2026\n"
+
+        perfil_actual = state.get("perfil", "")
+        perfil_linea  = ""
+        if perfil_actual:
+            label = {"autonomo": "Autónomo", "sociedad": "Sociedad"}.get(perfil_actual, "")
+            perfil_linea = f"Perfil del cliente: {label}\n"
 
         messages = [SystemMessage(content=SYSTEM_PROMPT)]
         messages += historial[:-1]
         messages.append(HumanMessage(content=(
-            f"Fecha de hoy: {fecha_hoy}\n{perfil_linea}"
+            f"{contexto_temporal}{perfil_linea}"
             f"Contexto recuperado de la base de conocimiento:\n---\n{contexto}\n---\n\n"
             f"Pregunta del usuario: {historial[-1].content}"
         )))
@@ -476,11 +509,17 @@ def cargar_recursos():
 
         perfil_actual = state.get("perfil", "")
         if not perfil_actual:
-            texto = historial[-1].content.lower()
-            if "autónomo" in texto or "autonomo" in texto:
-                perfil_actual = "autonomo"
-            elif any(k in texto for k in ("sociedad", "empresa", "s.l", "s.a")):
-                perfil_actual = "sociedad"
+            # Buscar perfil en todo el historial, del más reciente al más antiguo
+            _KW_AUTO = re.compile(r"\baut[oó]nomo\b", re.IGNORECASE)
+            _KW_SOC  = re.compile(r"\b(sociedad|empresa|s\.l|s\.a)\b", re.IGNORECASE)
+            for msg in reversed(historial):
+                texto = msg.content.lower()
+                if _KW_AUTO.search(texto):
+                    perfil_actual = "autonomo"
+                    break
+                if _KW_SOC.search(texto):
+                    perfil_actual = "sociedad"
+                    break
 
         return {"messages": [AIMessage(content=respuesta.content)], "perfil": perfil_actual}
 
