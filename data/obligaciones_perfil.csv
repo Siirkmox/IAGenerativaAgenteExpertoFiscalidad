@@ -1,0 +1,19 @@
+perfil;modelo;nombre;periodicidad;trimestres_aplica;obligatorio;descripcion
+autonomo;130;Pago fraccionado IRPF;trimestral;1T-2T-3T-4T;si;Estimación directa (normal o simplificada). No aplica si la retención supera el 70% de los ingresos.
+autonomo;303;Autoliquidación IVA;trimestral;1T-2T-3T-4T;si;Régimen general IVA. Aplica salvo exención o régimen especial.
+autonomo;111;Retenciones trabajo/profesionales;trimestral;1T-2T-3T-4T;condicional;Solo si tiene empleados o paga a profesionales con retención.
+autonomo;115;Retenciones alquileres;trimestral;1T-2T-3T-4T;condicional;Solo si paga alquiler de local afecto a la actividad.
+autonomo;100;IRPF anual;anual;anual;si;Declaración de la renta. Integra los pagos fraccionados del modelo 130 del año.
+autonomo;390;Resumen anual IVA;anual;anual;si;Declaración informativa anual. Complementa el modelo 303.
+autonomo;190;Resumen anual retenciones IRPF;anual;anual;condicional;Si presentó modelo 111 durante el año.
+autonomo;180;Resumen anual retenciones alquileres;anual;anual;condicional;Si presentó modelo 115 durante el año.
+autonomo;347;Operaciones con terceros;anual;anual;condicional;Si tuvo operaciones superiores a 3005.06 euros con un mismo tercero.
+sociedad;303;Autoliquidación IVA;trimestral;1T-2T-3T-4T;si;Régimen general IVA. Aplica salvo exención o régimen especial.
+sociedad;111;Retenciones trabajo/profesionales;trimestral;1T-2T-3T-4T;condicional;Si tiene empleados o paga a profesionales con retención.
+sociedad;115;Retenciones alquileres;trimestral;1T-2T-3T-4T;condicional;Solo si paga alquiler de inmueble.
+sociedad;202;Pagos fraccionados IS;cuatrimestral;1P_abril-2P_octubre-3P_diciembre;si;A cuenta del Impuesto sobre Sociedades. Tres pagos al año en abril octubre y diciembre.
+sociedad;200;Impuesto sobre Sociedades;anual;anual;si;Declaración anual IS. Plazo: 25 días naturales tras los 6 meses del cierre del ejercicio.
+sociedad;390;Resumen anual IVA;anual;anual;si;Declaración informativa anual. Complementa el modelo 303.
+sociedad;190;Resumen anual retenciones IRPF;anual;anual;condicional;Si presentó modelo 111 durante el año.
+sociedad;180;Resumen anual retenciones alquileres;anual;anual;condicional;Si presentó modelo 115 durante el año.
+sociedad;347;Operaciones con terceros;anual;anual;condicional;Si tuvo operaciones superiores a 3005.06 euros con un mismo tercero.

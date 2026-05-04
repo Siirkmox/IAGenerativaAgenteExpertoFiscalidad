@@ -1,0 +1,27 @@
+modelo,nombre,perfil,trimestre,fecha_limite_2026,domiciliacion_hasta,dias_preparacion_recomendados,periodicidad,descripcion
+130,Pago fraccionado IRPF autónomos 4T 2025,autonomo,4T_2025,2026-01-30,,10,trimestral,Pago fraccionado IRPF para actividades económicas en estimación directa (4T del ejercicio anterior)
+303,Autoliquidación IVA 4T 2025,ambos,4T_2025,2026-01-30,2026-01-27,10,trimestral,Declaración trimestral de IVA (régimen general). Domiciliación hasta 27 enero.
+390,Resumen anual IVA ejercicio 2025,ambos,anual_2025,2026-01-30,,7,anual,Declaración informativa resumen anual de IVA. Coincide con el plazo del 4T del 303.
+111,Retenciones e ingresos a cuenta IRPF 4T 2025,ambos,4T_2025,2026-01-20,,5,trimestral,Retenciones sobre rendimientos del trabajo y actividades profesionales (4T del ejercicio anterior)
+115,Retenciones e ingresos a cuenta — alquileres 4T 2025,ambos,4T_2025,2026-01-20,,5,trimestral,Retenciones sobre arrendamientos de inmuebles urbanos (4T del ejercicio anterior)
+180,Resumen anual retenciones alquileres 2025,ambos,anual_2025,2026-02-02,,5,anual,Declaración informativa resumen anual de retenciones sobre alquileres (modelo 115)
+190,Resumen anual retenciones IRPF 2025,ambos,anual_2025,2026-02-02,,7,anual,Declaración informativa resumen anual de retenciones e ingresos a cuenta (modelo 111)
+347,Operaciones con terceros 2025,ambos,anual_2025,2026-03-02,,10,anual,"Declaración informativa de operaciones con terceros superiores a 3.005,06 € anuales (ejercicio 2025)"
+100,IRPF anual 2025 — inicio campaña,autonomo,anual_2025,2026-04-08,,30,anual,Inicio del plazo de presentación de la declaración de la renta. Plazo hasta 30 junio.
+130,Pago fraccionado IRPF autónomos 1T 2026,autonomo,1T_2026,2026-04-20,,10,trimestral,Pago fraccionado IRPF para actividades económicas en estimación directa (1T 2026)
+303,Autoliquidación IVA 1T 2026,ambos,1T_2026,2026-04-20,2026-04-15,10,trimestral,Declaración trimestral de IVA (régimen general) 1T 2026. Domiciliación hasta 15 abril.
+111,Retenciones e ingresos a cuenta IRPF 1T 2026,ambos,1T_2026,2026-04-20,,5,trimestral,Retenciones sobre rendimientos del trabajo y actividades profesionales (1T 2026)
+115,Retenciones e ingresos a cuenta — alquileres 1T 2026,ambos,1T_2026,2026-04-20,,5,trimestral,Retenciones sobre arrendamientos de inmuebles urbanos (1T 2026)
+202,Pago fraccionado Impuesto Sociedades — 1P 2026,sociedad,1P_2026,2026-04-20,2026-04-15,10,cuatrimestral,Primer pago fraccionado a cuenta del IS. Domiciliación hasta 15 abril.
+100,IRPF anual 2025 — fin campaña,autonomo,anual_2025,2026-06-30,2026-06-25,30,anual,Fin del plazo de presentación de la declaración de la renta 2025. Domiciliación hasta 25 junio.
+130,Pago fraccionado IRPF autónomos 2T 2026,autonomo,2T_2026,2026-07-20,,10,trimestral,Pago fraccionado IRPF para actividades económicas en estimación directa (2T 2026)
+303,Autoliquidación IVA 2T 2026,ambos,2T_2026,2026-07-20,2026-07-15,10,trimestral,Declaración trimestral de IVA (régimen general) 2T 2026. Domiciliación hasta 15 julio.
+111,Retenciones e ingresos a cuenta IRPF 2T 2026,ambos,2T_2026,2026-07-20,,5,trimestral,Retenciones sobre rendimientos del trabajo y actividades profesionales (2T 2026)
+115,Retenciones e ingresos a cuenta — alquileres 2T 2026,ambos,2T_2026,2026-07-20,,5,trimestral,Retenciones sobre arrendamientos de inmuebles urbanos (2T 2026)
+200,Impuesto sobre Sociedades 2025,sociedad,anual_2025,2026-07-27,2026-07-22,21,anual,Declaración anual IS para periodos impositivos cerrados el 31/12/2025. Domiciliación hasta 22 julio.
+202,Pago fraccionado Impuesto Sociedades — 2P 2026,sociedad,2P_2026,2026-10-20,2026-10-15,10,cuatrimestral,Segundo pago fraccionado a cuenta del IS. Domiciliación hasta 15 octubre.
+130,Pago fraccionado IRPF autónomos 3T 2026,autonomo,3T_2026,2026-10-20,,10,trimestral,Pago fraccionado IRPF para actividades económicas en estimación directa (3T 2026)
+303,Autoliquidación IVA 3T 2026,ambos,3T_2026,2026-10-20,2026-10-15,10,trimestral,Declaración trimestral de IVA (régimen general) 3T 2026. Domiciliación hasta 15 octubre.
+111,Retenciones e ingresos a cuenta IRPF 3T 2026,ambos,3T_2026,2026-10-20,,5,trimestral,Retenciones sobre rendimientos del trabajo y actividades profesionales (3T 2026)
+115,Retenciones e ingresos a cuenta — alquileres 3T 2026,ambos,3T_2026,2026-10-20,,5,trimestral,Retenciones sobre arrendamientos de inmuebles urbanos (3T 2026)
+202,Pago fraccionado Impuesto Sociedades — 3P 2026,sociedad,3P_2026,2026-12-21,2026-12-16,10,cuatrimestral,Tercer pago fraccionado a cuenta del IS. Domiciliación hasta 16 diciembre.

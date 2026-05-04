@@ -1,0 +1,27 @@
+# Secrets
+.env
+
+# Archivos internos de desarrollo
+CLAUDE.md
+.streamlit/secrets.toml
+
+# Vector DB — incluido en el repo para despliegue en Streamlit Cloud
+# chroma_db/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# PDFs opcionales (pesados — subir solo si hay espacio en repo)
+# data/manuales/
