@@ -1,29 +1,34 @@
 import datetime
 import os
+import re
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Annotated, Literal, TypedDict
 
+import numpy as np
+import operator
 import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage, SystemMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.checkpoint.memory import MemorySaver
-from langgraph.graph import END, StateGraph
-from typing import TypedDict, Annotated
-import operator
+from langgraph.graph import END, START, StateGraph
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import Pipeline
 
 # ── Configuración ──────────────────────────────────────────────────────────────
 
 load_dotenv()
-# En Streamlit Cloud la API key viene de st.secrets; en local del .env
-GOOGLE_API_KEY = st.secrets.get("GOOGLE_API_KEY", os.getenv("GOOGLE_API_KEY"))
+GOOGLE_API_KEY  = st.secrets.get("GOOGLE_API_KEY", os.getenv("GOOGLE_API_KEY"))
 CHROMA_DIR      = "chroma_db"
 COLLECTION_NAME = "base_fiscal"
+MAX_MESSAGES    = 10
 
-# Rutas de documentos (relativas al directorio donde corre app.py)
 BASE_DIR     = Path(__file__).parent
 PRACTICOS_ES = BASE_DIR / "data/manuales/practicos/es"
 WEB_ES       = BASE_DIR / "data/manuales/web/es"
@@ -37,11 +42,6 @@ MANUAL_METADATA = {
     (PRACTICOS_ES, "manual_sociedades_200_202_2024.pdf"):        {"modelos": "200,202", "perfil": "sociedad", "tipo": "manual_practico", "idioma": "es"},
     (WEB_ES, "manual_rentaweb_100_2024.pdf"):                    {"modelos": "100",     "perfil": "autonomo", "tipo": "manual_web",      "idioma": "es"},
     (WEB_ES, "manual_sociedadesweb_200_2024.pdf"):               {"modelos": "200",     "perfil": "sociedad", "tipo": "manual_web",      "idioma": "es"},
-}
-LEYES_METADATA = {
-    (LEYES_DIR, "LeyIVA.pdf"):  {"modelos": "303",     "perfil": "ambos",    "tipo": "ley", "idioma": "es"},
-    (LEYES_DIR, "LeyIRPF.pdf"): {"modelos": "100,130", "perfil": "autonomo", "tipo": "ley", "idioma": "es"},
-    (LEYES_DIR, "LeyIS.pdf"):   {"modelos": "200,202", "perfil": "sociedad", "tipo": "ley", "idioma": "es"},
 }
 
 SYSTEM_PROMPT = """Eres un asesor fiscal experto de una gestoría española llamada GestorIA.
@@ -95,7 +95,7 @@ No uses frases de relleno como "¡Claro!", "¡Por supuesto!", "¡Espero haberte 
 
 ## EJEMPLOS DE RESPUESTA CORRECTA
 
-**Ejemplo 1 — Pregunta con perfil claro:**
+**Ejemplo 1 — Plazo con perfil claro:**
 Usuario: "Soy autónomo, ¿cuándo presento el 303 del 2T?"
 
 Respuesta:
@@ -116,21 +116,117 @@ Para darte la información correcta, necesito saber tu perfil fiscal. ¿Eres aut
 
 ---
 
-**Ejemplo 3 — Información no disponible:**
+**Ejemplo 3 — Cómo rellenar una casilla:**
+Usuario: "Soy autónomo. ¿Cómo relleno la casilla 01 del modelo 303?"
+
+Respuesta:
+**Perfil:** Autónomo.
+**Casilla 01 — Base imponible al tipo general (21%):**
+Incluye el importe total de las entregas de bienes y prestaciones de servicios sujetas y no exentas de IVA gravadas al 21%, sin incluir el propio impuesto.
+*Fuente: manual_iva_303_2025.pdf*
+
+---
+
+**Ejemplo 4 — Obligaciones de un trimestre:**
+Usuario: "Somos una S.L. ¿Qué tenemos que presentar en el segundo trimestre?"
+
+Respuesta:
+**Perfil:** Sociedad.
+**Obligaciones 2T 2026:**
+- Modelo 303 — IVA 2T | Plazo: 20 julio | Inicio preparación: 10 julio
+- Modelo 111 — Retenciones IRPF 2T | Plazo: 20 julio | Inicio preparación: 15 julio
+- Modelo 115 — Retenciones alquileres 2T | Plazo: 20 julio | Inicio preparación: 15 julio
+- Modelo 202 — Pago fraccionado IS | Plazo: 20 julio | Inicio preparación: 10 julio
+*Fuente: calendario_fiscal.csv, obligaciones_perfil.csv*
+
+---
+
+**Ejemplo 5 — Información no disponible:**
 Usuario: "¿Cuál es el tipo de recargo de equivalencia para el aceite de oliva?"
 
 Respuesta:
 No dispongo de información suficiente sobre este punto en mi base de conocimiento. Te recomiendo consultar la sede electrónica de la AEAT (sede.agenciatributaria.gob.es) o al gestor responsable.
 """
 
-# ── Carga del vectorstore y agente (cacheados para no recargar en cada interacción) ──
+# ── Moderación en cascada ──────────────────────────────────────────────────────
+# Capas: Reglas (gratis) → ML (rápido) → LLM (solo ambiguos)
+
+UMBRAL_CONFIANZA_ML = 0.85
+
+_KEYWORDS_FISCAL = re.compile(
+    r"\b(modelo|irpf|iva|impuesto|declaraci[oó]n|renta|hacienda|aeat|tribut|fiscal|"
+    r"autonomo|aut[oó]nomo|sociedad|empresa|s\.l|factura|casilla|plazo|trimestre|"
+    r"303|130|111|115|100|200|202|347|390|retenci[oó]n|deducci[oó]n)\b",
+    re.IGNORECASE,
+)
+_KEYWORDS_OFFTOPIC = re.compile(
+    r"\b(receta|cocina|deporte|f[uú]tbol|pel[ií]cula|m[uú]sica|viaje|hotel|"
+    r"tiempo|clima|meteorolog[ií]a|amor|relaci[oó]n|juego|videojuego)\b",
+    re.IGNORECASE,
+)
+
+@dataclass
+class ResultadoModeracion:
+    decision:  str    # "fiscal" | "offtopic"
+    capa:      str    # "reglas" | "ml" | "llm"
+    confianza: float
+
+@st.cache_resource(show_spinner=False)
+def _construir_clasificador_ml():
+    ejemplos = [
+        ("¿Cuándo presento el modelo 303?",                    "fiscal"),
+        ("¿Qué obligaciones tengo como autónomo?",             "fiscal"),
+        ("¿Cómo se rellena la casilla 01 del IVA?",           "fiscal"),
+        ("Plazo para presentar el IRPF 2025",                  "fiscal"),
+        ("¿Qué es la domiciliación en el modelo 130?",         "fiscal"),
+        ("Retenciones en el modelo 111 segundo trimestre",     "fiscal"),
+        ("¿Cuánto tiempo tengo para presentar el IS?",         "fiscal"),
+        ("Deducciones en el modelo 303",                       "fiscal"),
+        ("¿Cómo me doy de alta como autónomo en hacienda?",    "fiscal"),
+        ("¿Qué es el pago fraccionado del IRPF?",              "fiscal"),
+        ("¿Cuál es la mejor receta de paella?",                "offtopic"),
+        ("¿Quién ganó el partido de ayer?",                    "offtopic"),
+        ("Recomiéndame una película de terror",                "offtopic"),
+        ("¿Qué tiempo hace en Madrid?",                        "offtopic"),
+        ("¿Cómo se llama el presidente de Francia?",           "offtopic"),
+        ("Cuéntame un chiste",                                 "offtopic"),
+        ("¿Cuál es la capital de Australia?",                  "offtopic"),
+        ("Dame una ruta de senderismo",                        "offtopic"),
+    ]
+    X, y = zip(*ejemplos)
+    clf = Pipeline([
+        ("tfidf", TfidfVectorizer(ngram_range=(1, 2))),
+        ("clf",   LogisticRegression(max_iter=1000, random_state=42)),
+    ])
+    clf.fit(list(X), list(y))
+    return clf
+
+def moderar_pregunta(texto: str, llm) -> ResultadoModeracion:
+    # Capa 1: reglas
+    if _KEYWORDS_FISCAL.search(texto):
+        return ResultadoModeracion("fiscal",   "reglas", 1.0)
+    if _KEYWORDS_OFFTOPIC.search(texto):
+        return ResultadoModeracion("offtopic", "reglas", 1.0)
+    # Capa 2: ML
+    clf       = _construir_clasificador_ml()
+    proba     = clf.predict_proba([texto])[0]
+    idx_max   = int(np.argmax(proba))
+    confianza = float(proba[idx_max])
+    if confianza >= UMBRAL_CONFIANZA_ML:
+        return ResultadoModeracion(clf.classes_[idx_max], "ml", confianza)
+    # Capa 3: LLM solo para casos ambiguos
+    raw = llm.invoke([HumanMessage(
+        content="Clasifica esta pregunta como 'fiscal' o 'offtopic'. Responde SOLO con una palabra.\n\nPregunta: " + texto
+    )]).content.strip().lower()
+    return ResultadoModeracion("fiscal" if "fiscal" in raw else "offtopic", "llm", 0.6)
+
+
+# ── Indexación de documentos ───────────────────────────────────────────────────
 
 def _indexar_documentos(embeddings):
-    """Carga PDFs y CSVs, genera embeddings y persiste en ChromaDB. Solo se ejecuta una vez."""
     import pdfplumber
-    import pandas as pd
-    from langchain_text_splitters import RecursiveCharacterTextSplitter
     from langchain_core.documents import Document
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
 
     splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=100)
 
@@ -140,14 +236,13 @@ def _indexar_documentos(embeddings):
             path = directorio / filename
             if not path.exists():
                 continue
-            texto_completo = []
+            textos = []
             with pdfplumber.open(str(path)) as pdf:
                 for page in pdf.pages:
-                    texto = page.extract_text()
-                    if texto:
-                        texto_completo.append(texto)
-            texto_unido = "\n\n".join(texto_completo)
-            doc_base = Document(page_content=texto_unido, metadata={**meta, "fuente": filename})
+                    t = page.extract_text()
+                    if t:
+                        textos.append(t)
+            doc_base = Document(page_content="\n\n".join(textos), metadata={**meta, "fuente": filename})
             docs.extend(splitter.split_documents([doc_base]))
         return docs
 
@@ -157,26 +252,38 @@ def _indexar_documentos(embeddings):
         for _, row in df.iterrows():
             contenido = " | ".join(f"{col}: {val}" for col, val in row.items() if pd.notna(val))
             meta = {"fuente": path.name, "tipo": tipo}
-            if "modelo" in row: meta["modelos"] = str(row["modelo"])
-            if "perfil"  in row: meta["perfil"]  = str(row["perfil"])
+            if "modelo"    in row: meta["modelos"]   = str(row["modelo"])
+            if "perfil"    in row: meta["perfil"]    = str(row["perfil"])
             if "trimestre" in row: meta["trimestre"] = str(row["trimestre"])
             docs.append(Document(page_content=contenido, metadata=meta))
         return docs
 
-    # En Streamlit Cloud (1GB RAM) excluimos las leyes completas para no agotar memoria.
-    # Los manuales prácticos + calendario + obligaciones cubren todos los casos de uso.
+    # En Streamlit Cloud (1 GB RAM) excluimos las leyes completas para no agotar memoria.
     all_docs = (
-        cargar_pdfs(MANUAL_METADATA) +
-        cargar_csv(BASE_DIR / "data/calendario_fiscal.csv",   "calendario",         sep=",") +
-        cargar_csv(BASE_DIR / "data/obligaciones_perfil.csv", "obligaciones_perfil", sep=";")
+        cargar_pdfs(MANUAL_METADATA)
+        + cargar_csv(BASE_DIR / "data/calendario_fiscal.csv",   "calendario",          sep=",")
+        + cargar_csv(BASE_DIR / "data/obligaciones_perfil.csv", "obligaciones_perfil", sep=";")
     )
     return Chroma.from_documents(
         documents=all_docs,
         embedding=embeddings,
         persist_directory=CHROMA_DIR,
-        collection_name=COLLECTION_NAME
+        collection_name=COLLECTION_NAME,
     )
 
+
+# ── Agente LangGraph (cacheado) ────────────────────────────────────────────────
+
+_KEYWORDS_PLAZOS = re.compile(
+    r"\b(plazo|fecha|cuando|cuándo|vencimiento|trimestre|presentar|domicili|"
+    r"antelacion|antelación|pendiente|mes)\b",
+    re.IGNORECASE,
+)
+_KEYWORDS_DOCS = re.compile(
+    r"\b(casilla|rellenar|cumplimentar|calcul|base imponible|deduccion|deducción|"
+    r"como se|cómo se|instruccion|instrucción|apartado|anexo)\b",
+    re.IGNORECASE,
+)
 
 @st.cache_resource(show_spinner="Cargando base de conocimiento fiscal...")
 def cargar_recursos():
@@ -187,108 +294,164 @@ def cargar_recursos():
         vectorstore = Chroma(
             persist_directory=CHROMA_DIR,
             embedding_function=embeddings,
-            collection_name=COLLECTION_NAME
+            collection_name=COLLECTION_NAME,
         )
     else:
-        # Primera vez en Streamlit Cloud: indexar desde los PDFs del repositorio
         with st.spinner("Primera ejecución: indexando documentos (puede tardar unos minutos)..."):
             vectorstore = _indexar_documentos(embeddings)
 
     llm = ChatGoogleGenerativeAI(
         model="gemini-2.5-flash",
         google_api_key=GOOGLE_API_KEY,
-        temperature=0
+        temperature=0,
     )
 
     class AgentState(TypedDict):
-        messages: Annotated[list, operator.add]
-        perfil: str
-        contexto_rag: str
+        messages:      Annotated[list, operator.add]
+        perfil:        str
+        contexto_rag:  str
+        tipo_consulta: str
 
-    def recuperar_contexto(state: AgentState) -> AgentState:
-        ultima_pregunta = state["messages"][-1].content
-        perfil = state.get("perfil", "")
+    # ── Nodo: poda de historial ──
+    def podar_historial(state: AgentState) -> AgentState:
+        mensajes = state["messages"]
+        if len(mensajes) <= MAX_MESSAGES:
+            return {}
+        n = len(mensajes) - MAX_MESSAGES
+        if n % 2 != 0:
+            n += 1
+        return {"messages": [RemoveMessage(id=m.id) for m in mensajes[:n]]}
 
-        search_kwargs_manuales = {"k": 5}
-        if perfil in ("autonomo", "sociedad"):
-            search_kwargs_manuales["filter"] = {"perfil": {"$in": [perfil, "ambos"]}}
-        retriever_manuales = vectorstore.as_retriever(search_kwargs=search_kwargs_manuales)
-        docs_manuales_res = retriever_manuales.invoke(ultima_pregunta)
+    # ── Nodo: clasificación de consulta ──
+    def clasificar_consulta(state: AgentState) -> AgentState:
+        ultima = state["messages"][-1].content
+        if _KEYWORDS_PLAZOS.search(ultima):
+            tipo = "plazos"
+        elif _KEYWORDS_DOCS.search(ultima):
+            tipo = "documentos"
+        else:
+            tipo = "general"
+        return {"tipo_consulta": tipo}
 
-        filter_csv = {"tipo": {"$in": ["calendario", "obligaciones_perfil"]}}
-        retriever_csv = vectorstore.as_retriever(search_kwargs={"k": 6, "filter": filter_csv})
-        docs_csv_res = retriever_csv.invoke(ultima_pregunta)
+    def router(state: AgentState) -> Literal["recuperar_plazos", "recuperar_documentos", "recuperar_general"]:
+        return {
+            "plazos":     "recuperar_plazos",
+            "documentos": "recuperar_documentos",
+            "general":    "recuperar_general",
+        }[state["tipo_consulta"]]
 
-        vistos = set()
-        docs_combinados = []
-        for doc in docs_manuales_res + docs_csv_res:
+    # ── Utilidad: combinar docs sin duplicados ──
+    def _combinar(docs_a, docs_b):
+        vistos, resultado = set(), []
+        for doc in docs_a + docs_b:
             clave = doc.page_content[:100]
             if clave not in vistos:
                 vistos.add(clave)
-                docs_combinados.append(doc)
-
-        contexto = "\n\n".join(
-            f"[{d.metadata.get('fuente', '?')}]\n{d.page_content}"
-            for d in docs_combinados
+                resultado.append(doc)
+        return "\n\n".join(
+            f"[{d.metadata.get('fuente','?')}]\n{d.page_content}" for d in resultado
         )
-        return {"contexto_rag": contexto}
 
+    # ── Nodos de recuperación RAG especializados ──
+    def recuperar_plazos(state: AgentState) -> AgentState:
+        ultima = state["messages"][-1].content
+        perfil = state.get("perfil", "")
+        docs_csv = vectorstore.as_retriever(search_kwargs={
+            "k": 10, "filter": {"tipo": {"$in": ["calendario", "obligaciones_perfil"]}},
+        }).invoke(ultima)
+        kw = {"k": 3}
+        if perfil in ("autonomo", "sociedad"):
+            kw["filter"] = {"perfil": {"$in": [perfil, "ambos"]}}
+        docs_m = vectorstore.as_retriever(search_kwargs=kw).invoke(ultima)
+        return {"contexto_rag": _combinar(docs_csv, docs_m)}
+
+    def recuperar_documentos(state: AgentState) -> AgentState:
+        ultima = state["messages"][-1].content
+        perfil = state.get("perfil", "")
+        kw = {"k": 8}
+        if perfil in ("autonomo", "sociedad"):
+            kw["filter"] = {"perfil": {"$in": [perfil, "ambos"]}}
+        docs_m = vectorstore.as_retriever(search_kwargs=kw).invoke(ultima)
+        docs_csv = vectorstore.as_retriever(search_kwargs={
+            "k": 3, "filter": {"tipo": {"$in": ["calendario", "obligaciones_perfil"]}},
+        }).invoke(ultima)
+        return {"contexto_rag": _combinar(docs_m, docs_csv)}
+
+    def recuperar_general(state: AgentState) -> AgentState:
+        ultima = state["messages"][-1].content
+        perfil = state.get("perfil", "")
+        kw = {"k": 5}
+        if perfil in ("autonomo", "sociedad"):
+            kw["filter"] = {"perfil": {"$in": [perfil, "ambos"]}}
+        docs_m = vectorstore.as_retriever(search_kwargs=kw).invoke(ultima)
+        docs_csv = vectorstore.as_retriever(search_kwargs={
+            "k": 6, "filter": {"tipo": {"$in": ["calendario", "obligaciones_perfil"]}},
+        }).invoke(ultima)
+        return {"contexto_rag": _combinar(docs_m, docs_csv)}
+
+    # ── Nodo: generación de respuesta ──
     def generar_respuesta(state: AgentState) -> AgentState:
-        contexto = state.get("contexto_rag", "")
+        contexto  = state.get("contexto_rag", "")
         historial = state["messages"]
-
-        messages = [SystemMessage(content=SYSTEM_PROMPT)]
-        messages += historial[:-1]
-
-        ultima = historial[-1].content
         fecha_hoy = datetime.date.today().strftime("%d/%m/%Y")
         perfil_linea = ""
         if state.get("perfil"):
-            perfil_label = {"autonomo": "Autónomo", "sociedad": "Sociedad"}.get(state["perfil"], "")
-            perfil_linea = f"Perfil del cliente (seleccionado por el gestor): {perfil_label}\n"
+            label = {"autonomo": "Autónomo", "sociedad": "Sociedad"}.get(state["perfil"], "")
+            perfil_linea = f"Perfil del cliente (seleccionado por el gestor): {label}\n"
 
-        prompt_con_contexto = f"""Fecha de hoy: {fecha_hoy}
-{perfil_linea}
-Contexto recuperado de la base de conocimiento:
----
-{contexto}
----
-
-Pregunta del usuario: {ultima}"""
-
-        messages.append(HumanMessage(content=prompt_con_contexto))
+        messages = [SystemMessage(content=SYSTEM_PROMPT)]
+        messages += historial[:-1]
+        messages.append(HumanMessage(content=(
+            f"Fecha de hoy: {fecha_hoy}\n{perfil_linea}"
+            f"Contexto recuperado de la base de conocimiento:\n---\n{contexto}\n---\n\n"
+            f"Pregunta del usuario: {historial[-1].content}"
+        )))
         respuesta = llm.invoke(messages)
 
         perfil_actual = state.get("perfil", "")
-        texto = ultima.lower()
         if not perfil_actual:
+            texto = historial[-1].content.lower()
             if "autónomo" in texto or "autonomo" in texto:
                 perfil_actual = "autonomo"
-            elif "sociedad" in texto or "empresa" in texto or "s.l" in texto:
+            elif any(k in texto for k in ("sociedad", "empresa", "s.l", "s.a")):
                 perfil_actual = "sociedad"
 
-        return {
-            "messages": [AIMessage(content=respuesta.content)],
-            "perfil": perfil_actual
-        }
+        return {"messages": [AIMessage(content=respuesta.content)], "perfil": perfil_actual}
 
+    # ── Construcción del grafo ──
     workflow = StateGraph(AgentState)
-    workflow.add_node("recuperar_contexto", recuperar_contexto)
-    workflow.add_node("generar_respuesta", generar_respuesta)
-    workflow.set_entry_point("recuperar_contexto")
-    workflow.add_edge("recuperar_contexto", "generar_respuesta")
-    workflow.add_edge("generar_respuesta", END)
+    workflow.add_node("podar_historial",      podar_historial)
+    workflow.add_node("clasificar_consulta",  clasificar_consulta)
+    workflow.add_node("recuperar_plazos",     recuperar_plazos)
+    workflow.add_node("recuperar_documentos", recuperar_documentos)
+    workflow.add_node("recuperar_general",    recuperar_general)
+    workflow.add_node("generar_respuesta",    generar_respuesta)
 
-    memory = MemorySaver()
-    agente = workflow.compile(checkpointer=memory)
-    return agente
+    workflow.add_edge(START, "podar_historial")
+    workflow.add_edge("podar_historial", "clasificar_consulta")
+    workflow.add_conditional_edges(
+        "clasificar_consulta", router,
+        {
+            "recuperar_plazos":     "recuperar_plazos",
+            "recuperar_documentos": "recuperar_documentos",
+            "recuperar_general":    "recuperar_general",
+        },
+    )
+    workflow.add_edge("recuperar_plazos",     "generar_respuesta")
+    workflow.add_edge("recuperar_documentos", "generar_respuesta")
+    workflow.add_edge("recuperar_general",    "generar_respuesta")
+    workflow.add_edge("generar_respuesta",    END)
+
+    agente = workflow.compile(checkpointer=MemorySaver())
+    return agente, llm
+
 
 # ── Interfaz Streamlit ─────────────────────────────────────────────────────────
 
 st.set_page_config(
     page_title="Asistente Fiscal — GestorIA",
     page_icon="📋",
-    layout="centered"
+    layout="centered",
 )
 
 st.title("📋 Asistente Fiscal GestorIA")
@@ -296,21 +459,20 @@ st.caption("Asesor fiscal para autónomos y sociedades en España · Powered by 
 
 tab_chat, tab_calendario = st.tabs(["💬 Asistente", "📅 Calendario Fiscal"])
 
-# Selector de perfil en la barra lateral
 with st.sidebar:
     st.header("Configuración")
     perfil_opcion = st.selectbox(
         "Perfil del cliente",
         options=["Sin especificar", "Autónomo", "Sociedad"],
-        index=0
+        index=0,
     )
-    perfil_map = {"Sin especificar": "", "Autónomo": "autonomo", "Sociedad": "sociedad"}
+    perfil_map          = {"Sin especificar": "", "Autónomo": "autonomo", "Sociedad": "sociedad"}
     perfil_seleccionado = perfil_map[perfil_opcion]
 
     if st.button("🔄 Nueva conversación"):
-        st.session_state.messages = []
+        st.session_state.messages    = []
         st.session_state.agent_state = {
-            "messages": [], "perfil": perfil_seleccionado, "contexto_rag": ""
+            "messages": [], "perfil": perfil_seleccionado, "contexto_rag": "", "tipo_consulta": "",
         }
         st.session_state.thread_id = str(uuid.uuid4())
         st.rerun()
@@ -320,48 +482,52 @@ with st.sidebar:
     st.markdown("303 · 130 · 111 · 115 · 100 · 200 · 202 · 390 · 347")
 
 # Inicializar estado de sesión
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-if "thread_id" not in st.session_state:
-    st.session_state.thread_id = str(uuid.uuid4())
+if "messages"    not in st.session_state:
+    st.session_state.messages    = []
+if "thread_id"   not in st.session_state:
+    st.session_state.thread_id   = str(uuid.uuid4())
 if "agent_state" not in st.session_state:
     st.session_state.agent_state = {
-        "messages": [], "perfil": perfil_seleccionado, "contexto_rag": ""
+        "messages": [], "perfil": perfil_seleccionado, "contexto_rag": "", "tipo_consulta": "",
     }
 
-# Actualizar perfil si cambia el selector
 if st.session_state.agent_state.get("perfil") != perfil_seleccionado and not st.session_state.messages:
     st.session_state.agent_state["perfil"] = perfil_seleccionado
 
-# Cargar el agente
-agente = cargar_recursos()
+agente, llm = cargar_recursos()
 
 with tab_chat:
-    # Mostrar historial de mensajes
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    # chat_input siempre se ancla al fondo de la pantalla
     pregunta = st.chat_input("Escribe tu pregunta fiscal...")
 
     if pregunta and pregunta.strip():
+        moderacion = moderar_pregunta(pregunta, llm)
+
         st.session_state.messages.append({"role": "user", "content": pregunta})
         with st.chat_message("user"):
             st.markdown(pregunta)
 
-        with st.chat_message("assistant"):
-            with st.spinner("Consultando la base de conocimiento..."):
-                state = st.session_state.agent_state
-                state["messages"] = state.get("messages", []) + [HumanMessage(content=pregunta)]
-
-                config = {"configurable": {"thread_id": st.session_state.thread_id}}
-                result = agente.invoke(state, config=config)
-
-                st.session_state.agent_state = result
-                respuesta = result["messages"][-1].content
-
-            st.markdown(respuesta)
+        if moderacion.decision == "offtopic":
+            respuesta = (
+                "Esta pregunta está fuera de mi ámbito de especialización. "
+                "Soy un asistente fiscal especializado en obligaciones tributarias españolas. "
+                "¿Puedo ayudarte con alguna consulta fiscal?"
+            )
+            with st.chat_message("assistant"):
+                st.markdown(respuesta)
+        else:
+            with st.chat_message("assistant"):
+                with st.spinner("Consultando la base de conocimiento..."):
+                    state  = st.session_state.agent_state
+                    state["messages"] = state.get("messages", []) + [HumanMessage(content=pregunta)]
+                    config = {"configurable": {"thread_id": st.session_state.thread_id}}
+                    result = agente.invoke(state, config=config)
+                    st.session_state.agent_state = result
+                    respuesta = result["messages"][-1].content
+                st.markdown(respuesta)
 
         st.session_state.messages.append({"role": "assistant", "content": respuesta})
         st.rerun()
@@ -372,53 +538,41 @@ with tab_calendario:
     @st.cache_data
     def cargar_calendario():
         df = pd.read_csv(BASE_DIR / "data/calendario_fiscal.csv")
-        df["fecha_limite_2026"] = pd.to_datetime(df["fecha_limite_2026"])
+        df["fecha_limite_2026"]   = pd.to_datetime(df["fecha_limite_2026"])
         df["domiciliacion_hasta"] = pd.to_datetime(df["domiciliacion_hasta"], errors="coerce")
         return df.sort_values("fecha_limite_2026")
 
     df_cal = cargar_calendario()
 
-    # Filtro de perfil
     opciones_perfil = {"Todos": None, "Autónomo": "autonomo", "Sociedad": "sociedad"}
-    perfil_filtro = st.radio(
+    perfil_filtro   = st.radio(
         "Mostrar obligaciones de:",
         options=list(opciones_perfil.keys()),
         index={"": 0, "autonomo": 1, "sociedad": 2}.get(perfil_seleccionado, 0),
-        horizontal=True
+        horizontal=True,
     )
     valor_filtro = opciones_perfil[perfil_filtro]
+    df_vis = df_cal[df_cal["perfil"].isin([valor_filtro, "ambos"])].copy() if valor_filtro else df_cal.copy()
 
-    if valor_filtro:
-        df_vis = df_cal[df_cal["perfil"].isin([valor_filtro, "ambos"])].copy()
-    else:
-        df_vis = df_cal.copy()
-
-    # Destacar vencimientos próximos (≤ 30 días desde hoy)
     hoy = datetime.date.today()
-    df_vis["_dias_restantes"] = (df_vis["fecha_limite_2026"].dt.date - hoy).apply(lambda d: d.days)
+    df_vis["_dias"] = (df_vis["fecha_limite_2026"].dt.date - hoy).apply(lambda d: d.days)
     df_vis = df_vis.reset_index(drop=True)
 
     def estado(d):
-        if d < 0:
-            return "✅ Vencido"
-        elif d <= 7:
-            return "🔴 ≤ 7 días"
-        elif d <= 30:
-            return "🟡 ≤ 30 días"
-        else:
-            return "🟢 Pendiente"
+        if d < 0:   return "✅ Vencido"
+        if d <= 7:  return "🔴 ≤ 7 días"
+        if d <= 30: return "🟡 ≤ 30 días"
+        return "🟢 Pendiente"
 
-    df_show = pd.DataFrame({
-        "Estado": df_vis["_dias_restantes"].apply(estado),
-        "Modelo": df_vis["modelo"],
-        "Obligación": df_vis["nombre"],
-        "Perfil": df_vis["perfil"],
-        "Fecha límite": df_vis["fecha_limite_2026"].dt.strftime("%d/%m/%Y"),
+    st.dataframe(pd.DataFrame({
+        "Estado":              df_vis["_dias"].apply(estado),
+        "Modelo":              df_vis["modelo"],
+        "Obligación":          df_vis["nombre"],
+        "Perfil":              df_vis["perfil"],
+        "Fecha límite":        df_vis["fecha_limite_2026"].dt.strftime("%d/%m/%Y"),
         "Domiciliación hasta": df_vis["domiciliacion_hasta"].apply(
             lambda x: x.strftime("%d/%m/%Y") if pd.notna(x) else "—"
         ),
-        "Días preparación": df_vis["dias_preparacion_recomendados"],
-        "Periodicidad": df_vis["periodicidad"],
-    })
-
-    st.dataframe(df_show, use_container_width=True, hide_index=True)
+        "Días preparación":    df_vis["dias_preparacion_recomendados"],
+        "Periodicidad":        df_vis["periodicidad"],
+    }), use_container_width=True, hide_index=True)
