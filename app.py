@@ -226,9 +226,15 @@ def moderar_pregunta(texto: str, llm) -> ResultadoModeracion:
 def _indexar_documentos(embeddings):
     import pdfplumber
     from langchain_core.documents import Document
+    from langchain_experimental.text_splitter import SemanticChunker
     from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-    splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=100)
+    semantic_splitter  = SemanticChunker(
+        embeddings=embeddings,
+        breakpoint_threshold_type="percentile",
+        breakpoint_threshold_amount=95,
+    )
+    fallback_splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=100)
 
     def cargar_pdfs(metadata_map):
         docs = []
@@ -243,7 +249,13 @@ def _indexar_documentos(embeddings):
                     if t:
                         textos.append(t)
             doc_base = Document(page_content="\n\n".join(textos), metadata={**meta, "fuente": filename})
-            docs.extend(splitter.split_documents([doc_base]))
+            try:
+                chunks = semantic_splitter.split_documents([doc_base])
+                if not chunks:
+                    raise ValueError("0 chunks")
+            except Exception:
+                chunks = fallback_splitter.split_documents([doc_base])
+            docs.extend(chunks)
         return docs
 
     def cargar_csv(path, tipo, sep=","):
