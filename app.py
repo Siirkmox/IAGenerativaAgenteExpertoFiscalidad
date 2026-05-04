@@ -242,8 +242,13 @@ def cargar_recursos():
 
         ultima = historial[-1].content
         fecha_hoy = datetime.date.today().strftime("%d/%m/%Y")
-        prompt_con_contexto = f"""Fecha de hoy: {fecha_hoy}
+        perfil_linea = ""
+        if state.get("perfil"):
+            perfil_label = {"autonomo": "Autónomo", "sociedad": "Sociedad"}.get(state["perfil"], "")
+            perfil_linea = f"Perfil del cliente (seleccionado por el gestor): {perfil_label}\n"
 
+        prompt_con_contexto = f"""Fecha de hoy: {fecha_hoy}
+{perfil_linea}
 Contexto recuperado de la base de conocimiento:
 ---
 {contexto}
