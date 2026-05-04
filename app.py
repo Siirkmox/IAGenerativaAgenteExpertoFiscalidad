@@ -241,7 +241,10 @@ def cargar_recursos():
         messages += historial[:-1]
 
         ultima = historial[-1].content
-        prompt_con_contexto = f"""Contexto recuperado de la base de conocimiento:
+        fecha_hoy = datetime.date.today().strftime("%d/%m/%Y")
+        prompt_con_contexto = f"""Fecha de hoy: {fecha_hoy}
+
+Contexto recuperado de la base de conocimiento:
 ---
 {contexto}
 ---
