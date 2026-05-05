@@ -5,8 +5,8 @@
 CLAUDE.md
 .streamlit/secrets.toml
 
-# Vector DB — se reconstruye automáticamente al arrancar (app.py / notebook)
-chroma_db/
+# Vector DB — incluida en el repo para despliegue directo en Streamlit Cloud
+# chroma_db/
 
 # Python
 __pycache__/
