@@ -28,12 +28,17 @@ from sklearn.pipeline import Pipeline
 # ── Configuración ──────────────────────────────────────────────────────────────
 
 load_dotenv()
-GOOGLE_API_KEYS = [
-    st.secrets.get("GOOGLE_API_KEY",   os.getenv("GOOGLE_API_KEY")),
-    st.secrets.get("GOOGLE_API_KEY_2", os.getenv("GOOGLE_API_KEY_2")),
-    st.secrets.get("GOOGLE_API_KEY_3", os.getenv("GOOGLE_API_KEY_3")),
-]
-GOOGLE_API_KEYS = [k for k in GOOGLE_API_KEYS if k]  # elimina vacías/None
+# Carga automática: GOOGLE_API_KEY, GOOGLE_API_KEY_2, GOOGLE_API_KEY_3, ...
+# Añadir más claves al .env / Streamlit secrets no requiere cambios en el código.
+_base = st.secrets.get("GOOGLE_API_KEY", os.getenv("GOOGLE_API_KEY"))
+GOOGLE_API_KEYS = [_base] if _base else []
+_i = 2
+while True:
+    _k = st.secrets.get(f"GOOGLE_API_KEY_{_i}", os.getenv(f"GOOGLE_API_KEY_{_i}"))
+    if not _k:
+        break
+    GOOGLE_API_KEYS.append(_k)
+    _i += 1
 
 CHROMA_DIR      = "chroma_db"
 COLLECTION_NAME = "base_fiscal"
