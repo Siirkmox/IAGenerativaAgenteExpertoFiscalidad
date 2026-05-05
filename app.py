@@ -581,29 +581,14 @@ def _invoke_con_retry(llm_obj, messages: list, tipo: str = "agente"):
     raise RuntimeError("Se agotaron los reintentos de la API.")
 
 def _inicializar_llm(tipo: str = "agente") -> ChatGoogleGenerativeAI:
-    """Busca la primera combinación modelo+clave disponible al arrancar."""
-    modelos = MODELOS_AGENTE if tipo == "agente" else MODELOS_LITE
+    """Inicializa el LLM con la primera combinación modelo+clave sin llamada de prueba.
+    El fallback actúa en el primer uso real si la combinación está agotada."""
     if not GOOGLE_API_KEYS:
         raise RuntimeError("No hay ninguna GOOGLE_API_KEY configurada.")
-    for m_idx, modelo in enumerate(modelos):
-        for c_idx in range(len(GOOGLE_API_KEYS)):
-            for _ in range(MAX_RETRIES_RPM):
-                try:
-                    llm_test = _crear_llm(modelo, c_idx)
-                    llm_test.invoke([HumanMessage(content="ok")])
-                    _estado[tipo]["modelo_idx"] = m_idx
-                    _estado[tipo]["clave_idx"]  = c_idx
-                    if m_idx > 0 or c_idx > 0:
-                        st.info(f"[{tipo}] Arrancando con {modelo} / clave {c_idx + 1}")
-                    return llm_test
-                except Exception as e:
-                    err = str(e)
-                    if "RESOURCE_EXHAUSTED" not in err and "429" not in err:
-                        raise
-                    if _es_limite_diario(err):
-                        break
-                    time.sleep(_extraer_retry_delay(err))
-    raise RuntimeError("Todas las combinaciones modelo+clave están agotadas al arrancar.")
+    modelos = MODELOS_AGENTE if tipo == "agente" else MODELOS_LITE
+    _estado[tipo]["modelo_idx"] = 0
+    _estado[tipo]["clave_idx"]  = 0
+    return _crear_llm(modelos[0], 0)
 
 
 @st.cache_resource(show_spinner="Cargando base de conocimiento fiscal...")
