@@ -367,9 +367,9 @@ def moderar_pregunta(texto: str, llm_lite) -> ResultadoModeracion:
     if confianza >= UMBRAL_CONFIANZA_ML:
         return ResultadoModeracion(clf.classes_[idx_max], "ml", confianza)
     # Capa 3: modelo lite para casos ambiguos
-    raw = _invoke_con_retry(llm_lite, [HumanMessage(
+    raw = _extraer_texto(_invoke_con_retry(llm_lite, [HumanMessage(
         content="Clasifica esta pregunta como 'fiscal' o 'offtopic'. Responde SOLO con una palabra.\n\nPregunta: " + texto
-    )], tipo="lite").content.strip().lower()
+    )], tipo="lite")).strip().lower()
     return ResultadoModeracion("fiscal" if "fiscal" in raw else "offtopic", "llm", 0.6)
 
 
@@ -399,7 +399,7 @@ def evaluar_respuesta(pregunta: str, respuesta: str, llm_lite) -> Optional[dict]
         prompt_messages = _PROMPT_JUEZ.format_messages(
             pregunta=pregunta, respuesta=respuesta, criterios=criterios
         )
-        raw = _invoke_con_retry(llm_lite, prompt_messages, tipo="lite").content
+        raw = _extraer_texto(_invoke_con_retry(llm_lite, prompt_messages, tipo="lite"))
         return json.loads(raw.strip().replace("```json", "").replace("```", "").strip())
     except Exception:
         return None
@@ -499,6 +499,16 @@ MODELOS_LITE = [
     "gemini-2.5-flash",
     "gemini-3-flash-preview",
 ]
+
+def _extraer_texto(msg) -> str:
+    """Extrae texto de un mensaje cuyo .content puede ser str o list (Gemini 3+)."""
+    c = msg.content
+    if isinstance(c, str):
+        return c
+    if isinstance(c, list):
+        partes = [p.get("text", "") if isinstance(p, dict) else str(p) for p in c]
+        return " ".join(partes)
+    return str(c)
 
 def _extraer_retry_delay(error_str: str, default: float = 15.0) -> float:
     match = re.search(r"retryDelay.*?(\d+(?:\.\d+)?)\s*s", error_str)
@@ -676,7 +686,7 @@ def cargar_recursos():
     def recuperar_documentos(state: AgentState) -> AgentState:
         ultima = state["messages"][-1].content
         perfil = state.get("perfil", "")
-        kw = {"k": 8}
+        kw = {"k": 12}
         if perfil in ("autonomo", "sociedad"):
             kw["filter"] = {"perfil": {"$in": [perfil, "ambos"]}}
         docs_m = vectorstore.as_retriever(search_kwargs=kw).invoke(ultima)
@@ -856,7 +866,7 @@ with tab_chat:
                     config = {"configurable": {"thread_id": st.session_state.thread_id}}
                     result = agente.invoke(state, config=config)
                     st.session_state.agent_state = result
-                    respuesta = result["messages"][-1].content
+                    respuesta = _extraer_texto(result["messages"][-1])
                 st.markdown(respuesta)
 
                 evaluacion = None
