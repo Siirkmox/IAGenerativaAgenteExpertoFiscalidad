@@ -353,7 +353,7 @@ def _construir_clasificador_ml():
     clf.fit(list(X), list(y))
     return clf
 
-def moderar_pregunta(texto: str, llm) -> ResultadoModeracion:
+def moderar_pregunta(texto: str, llm_lite) -> ResultadoModeracion:
     # Capa 1: reglas
     if _KEYWORDS_FISCAL.search(texto):
         return ResultadoModeracion("fiscal",   "reglas", 1.0)
@@ -366,10 +366,10 @@ def moderar_pregunta(texto: str, llm) -> ResultadoModeracion:
     confianza = float(proba[idx_max])
     if confianza >= UMBRAL_CONFIANZA_ML:
         return ResultadoModeracion(clf.classes_[idx_max], "ml", confianza)
-    # Capa 3: LLM solo para casos ambiguos
-    raw = _invoke_con_retry(llm, [HumanMessage(
+    # Capa 3: modelo lite para casos ambiguos
+    raw = _invoke_con_retry(llm_lite, [HumanMessage(
         content="Clasifica esta pregunta como 'fiscal' o 'offtopic'. Responde SOLO con una palabra.\n\nPregunta: " + texto
-    )]).content.strip().lower()
+    )], tipo="lite").content.strip().lower()
     return ResultadoModeracion("fiscal" if "fiscal" in raw else "offtopic", "llm", 0.6)
 
 
@@ -393,13 +393,13 @@ Responde ÚNICAMENTE con este JSON (sin markdown):
 }}
 """)
 
-def evaluar_respuesta(pregunta: str, respuesta: str, llm) -> Optional[dict]:
+def evaluar_respuesta(pregunta: str, respuesta: str, llm_lite) -> Optional[dict]:
     criterios = "precisión de fechas y plazos, claridad de la explicación, completitud según el perfil del usuario"
     try:
         prompt_messages = _PROMPT_JUEZ.format_messages(
             pregunta=pregunta, respuesta=respuesta, criterios=criterios
         )
-        raw = _invoke_con_retry(llm, prompt_messages).content
+        raw = _invoke_con_retry(llm_lite, prompt_messages, tipo="lite").content
         return json.loads(raw.strip().replace("```json", "").replace("```", "").strip())
     except Exception:
         return None
@@ -486,6 +486,20 @@ _KEYWORDS_DOCS = re.compile(
 
 MAX_RETRIES_RPM = 5
 
+# Matriz de fallback: el agente usa modelos potentes primero; lite/judge usa modelos ligeros primero.
+MODELOS_AGENTE = [
+    "gemini-3-flash-preview",
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-3.1-flash-lite-preview",
+]
+MODELOS_LITE = [
+    "gemini-3.1-flash-lite-preview",
+    "gemini-2.5-flash-lite",
+    "gemini-2.5-flash",
+    "gemini-3-flash-preview",
+]
+
 def _extraer_retry_delay(error_str: str, default: float = 15.0) -> float:
     match = re.search(r"retryDelay.*?(\d+(?:\.\d+)?)\s*s", error_str)
     return float(match.group(1)) + 1 if match else default
@@ -496,19 +510,43 @@ def _es_limite_diario(err: str) -> bool:
 def _es_limite_rpm(err: str) -> bool:
     return "GenerateRequestsPerMinutePerProjectPerModel" in err
 
-# Estado global de clave activa (permite rotar en caliente durante la sesión)
-_estado_claves = {"idx": 0}
-
-def _crear_llm_para_clave(idx: int) -> ChatGoogleGenerativeAI:
+def _crear_llm(modelo: str, clave_idx: int) -> ChatGoogleGenerativeAI:
     return ChatGoogleGenerativeAI(
-        model="gemini-2.5-flash",
-        google_api_key=GOOGLE_API_KEYS[idx],
+        model=modelo,
+        google_api_key=GOOGLE_API_KEYS[clave_idx],
         temperature=0,
     )
 
-def _invoke_con_retry(llm_obj, messages: list):
-    """Invoca el LLM con retry RPM y fallback a siguiente clave ante límite diario."""
-    for _ in range(MAX_RETRIES_RPM + len(GOOGLE_API_KEYS)):
+# Estado global: índice de modelo y clave activos para agente y lite
+_estado = {
+    "agente": {"modelo_idx": 0, "clave_idx": 0},
+    "lite":   {"modelo_idx": 0, "clave_idx": 0},
+}
+
+def _siguiente_combinacion(tipo: str) -> bool:
+    """Avanza a la siguiente combinación modelo+clave. Devuelve False si se agotaron todas."""
+    modelos = MODELOS_AGENTE if tipo == "agente" else MODELOS_LITE
+    est = _estado[tipo]
+    # Primero rotar clave dentro del mismo modelo
+    if est["clave_idx"] + 1 < len(GOOGLE_API_KEYS):
+        est["clave_idx"] += 1
+        return True
+    # Si se agotaron las claves, bajar al siguiente modelo y resetear claves
+    if est["modelo_idx"] + 1 < len(modelos):
+        est["modelo_idx"] += 1
+        est["clave_idx"] = 0
+        return True
+    return False
+
+def _llm_actual(tipo: str) -> ChatGoogleGenerativeAI:
+    modelos = MODELOS_AGENTE if tipo == "agente" else MODELOS_LITE
+    est = _estado[tipo]
+    return _crear_llm(modelos[est["modelo_idx"]], est["clave_idx"])
+
+def _invoke_con_retry(llm_obj, messages: list, tipo: str = "agente"):
+    """Invoca el LLM con retry RPM y fallback modelo+clave ante límite diario."""
+    modelos = MODELOS_AGENTE if tipo == "agente" else MODELOS_LITE
+    for _ in range(MAX_RETRIES_RPM + len(GOOGLE_API_KEYS) * len(modelos)):
         try:
             return llm_obj.invoke(messages)
         except Exception as e:
@@ -520,40 +558,42 @@ def _invoke_con_retry(llm_obj, messages: list):
                 time.sleep(delay)
                 continue
             if _es_limite_diario(err):
-                idx_nuevo = _estado_claves["idx"] + 1
-                if idx_nuevo >= len(GOOGLE_API_KEYS):
-                    raise RuntimeError("Todas las claves de API están agotadas (límite diario).") from e
-                st.warning(f"Clave API {_estado_claves['idx'] + 1} agotada — cambiando a clave {idx_nuevo + 1}...")
-                _estado_claves["idx"] = idx_nuevo
-                llm_obj = _crear_llm_para_clave(idx_nuevo)
+                est = _estado[tipo]
+                modelo_actual = modelos[est["modelo_idx"]]
+                if not _siguiente_combinacion(tipo):
+                    raise RuntimeError("Todas las combinaciones modelo+clave están agotadas.") from e
+                nuevo_modelo = modelos[_estado[tipo]["modelo_idx"]]
+                nueva_clave  = _estado[tipo]["clave_idx"] + 1
+                st.warning(f"[{modelo_actual}] clave {est['clave_idx']} agotada → {nuevo_modelo} clave {nueva_clave}")
+                llm_obj = _llm_actual(tipo)
                 continue
             raise
     raise RuntimeError("Se agotaron los reintentos de la API.")
 
-def _inicializar_llm(claves: list) -> ChatGoogleGenerativeAI:
-    """Prueba las claves en orden al arrancar y devuelve el LLM con la primera disponible."""
-    if not claves:
+def _inicializar_llm(tipo: str = "agente") -> ChatGoogleGenerativeAI:
+    """Busca la primera combinación modelo+clave disponible al arrancar."""
+    modelos = MODELOS_AGENTE if tipo == "agente" else MODELOS_LITE
+    if not GOOGLE_API_KEYS:
         raise RuntimeError("No hay ninguna GOOGLE_API_KEY configurada.")
-    for i in range(len(claves)):
-        for _ in range(MAX_RETRIES_RPM):
-            try:
-                llm_test = _crear_llm_para_clave(i)
-                llm_test.invoke([HumanMessage(content="ok")])
-                if i > 0:
-                    st.info(f"Usando clave API {i + 1} (las anteriores están agotadas).")
-                _estado_claves["idx"] = i
-                return llm_test
-            except Exception as e:
-                err = str(e)
-                if "RESOURCE_EXHAUSTED" not in err and "429" not in err:
-                    raise
-                if _es_limite_diario(err):
-                    break
-                time.sleep(_extraer_retry_delay(err))
-        else:
-            continue
-        continue
-    raise RuntimeError("Todas las claves de API están agotadas al arrancar.")
+    for m_idx, modelo in enumerate(modelos):
+        for c_idx in range(len(GOOGLE_API_KEYS)):
+            for _ in range(MAX_RETRIES_RPM):
+                try:
+                    llm_test = _crear_llm(modelo, c_idx)
+                    llm_test.invoke([HumanMessage(content="ok")])
+                    _estado[tipo]["modelo_idx"] = m_idx
+                    _estado[tipo]["clave_idx"]  = c_idx
+                    if m_idx > 0 or c_idx > 0:
+                        st.info(f"[{tipo}] Arrancando con {modelo} / clave {c_idx + 1}")
+                    return llm_test
+                except Exception as e:
+                    err = str(e)
+                    if "RESOURCE_EXHAUSTED" not in err and "429" not in err:
+                        raise
+                    if _es_limite_diario(err):
+                        break
+                    time.sleep(_extraer_retry_delay(err))
+    raise RuntimeError("Todas las combinaciones modelo+clave están agotadas al arrancar.")
 
 
 @st.cache_resource(show_spinner="Cargando base de conocimiento fiscal...")
@@ -571,7 +611,8 @@ def cargar_recursos():
         with st.spinner("Primera ejecución: indexando documentos (puede tardar unos minutos)..."):
             vectorstore = _indexar_documentos(embeddings)
 
-    llm = _inicializar_llm(GOOGLE_API_KEYS)
+    llm      = _inicializar_llm("agente")
+    llm_lite = _inicializar_llm("lite")
 
     class AgentState(TypedDict):
         messages:      Annotated[list, operator.add]
@@ -678,7 +719,7 @@ def cargar_recursos():
             f"Contexto recuperado de la base de conocimiento:\n---\n{contexto}\n---\n\n"
             f"Pregunta del usuario: {historial[-1].content}"
         )))
-        respuesta = _invoke_con_retry(llm, messages)
+        respuesta = _invoke_con_retry(llm, messages, tipo="agente")
 
         perfil_actual = state.get("perfil", "")
         if not perfil_actual:
@@ -721,7 +762,7 @@ def cargar_recursos():
     workflow.add_edge("generar_respuesta",    END)
 
     agente = workflow.compile(checkpointer=MemorySaver())
-    return agente, llm
+    return agente, llm, llm_lite
 
 
 # ── Interfaz Streamlit ─────────────────────────────────────────────────────────
@@ -774,7 +815,7 @@ if "agent_state" not in st.session_state:
 if st.session_state.agent_state.get("perfil") != perfil_seleccionado and not st.session_state.messages:
     st.session_state.agent_state["perfil"] = perfil_seleccionado
 
-agente, llm = cargar_recursos()
+agente, llm, llm_lite = cargar_recursos()
 
 with tab_chat:
     for msg in st.session_state.messages:
@@ -792,7 +833,7 @@ with tab_chat:
     pregunta = st.chat_input("Escribe tu pregunta fiscal...")
 
     if pregunta and pregunta.strip():
-        moderacion = moderar_pregunta(pregunta, llm)
+        moderacion = moderar_pregunta(pregunta, llm_lite)
 
         st.session_state.messages.append({"role": "user", "content": pregunta})
         with st.chat_message("user"):
@@ -821,7 +862,7 @@ with tab_chat:
                 evaluacion = None
                 if mostrar_evaluacion:
                     with st.spinner("Evaluando calidad..."):
-                        evaluacion = evaluar_respuesta(pregunta, respuesta, llm)
+                        evaluacion = evaluar_respuesta(pregunta, respuesta, llm_lite)
                     if evaluacion:
                         with st.expander(f"Evaluación — {evaluacion.get('puntuacion_global', '-')}/10"):
                             c1, c2, c3 = st.columns(3)
