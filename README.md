@@ -6,7 +6,8 @@ Agente de IA para gestorías españolas que asesora sobre obligaciones fiscales 
 
 | Componente | Tecnología |
 |---|---|
-| LLM | Google Gemini 2.5 Flash |
+| LLM (agente principal) | Google Gemini — matriz de fallback por modelo y clave |
+| LLM (moderación y evaluación) | Google Gemini — modelos ligeros con fallback |
 | Embeddings | sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 (local, HuggingFace) |
 | Base de conocimiento vectorial | ChromaDB |
 | Framework de agente | LangGraph + LangChain |
@@ -68,15 +69,17 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 3. Configurar la API key de Google Gemini
+### 3. Configurar las API keys de Google Gemini
 
-Crea un archivo `.env` en la raíz del proyecto:
+Crea un archivo `.env` en la raíz del proyecto con una o más claves:
 
 ```
-GOOGLE_API_KEY=tu_api_key_de_gemini
+GOOGLE_API_KEY=tu_api_key_1
+GOOGLE_API_KEY_2=tu_api_key_2
+GOOGLE_API_KEY_3=tu_api_key_3
 ```
 
-Obtén tu API key en [Google AI Studio](https://aistudio.google.com/app/apikey).
+El código detecta automáticamente todas las claves presentes (`GOOGLE_API_KEY`, `GOOGLE_API_KEY_2`, `GOOGLE_API_KEY_3`, ...) sin necesidad de modificar el código al añadir nuevas. Obtén tus API keys en [Google AI Studio](https://aistudio.google.com/app/apikey).
 
 ### 4. Ejecutar el notebook
 
@@ -136,7 +139,7 @@ clasificar_consulta   ← detecta tipo de pregunta por keywords
   └─► recuperar_general     (k=5 PDF + k=6 CSV)  — mezcla balanceada
          │
          ▼
-    generar_respuesta  ← Gemini 2.5 Flash + contexto RAG + historial
+    generar_respuesta  ← llm_agente + contexto RAG + historial
          │
          ▼
         END
@@ -144,8 +147,10 @@ clasificar_consulta   ← detecta tipo de pregunta por keywords
 
 - **Routing condicional:** la pregunta se clasifica por keywords antes de recuperar contexto. Las preguntas de plazos priorizan los CSVs del calendario; las de cumplimentación priorizan los manuales PDF; el resto usa una mezcla balanceada.
 - **Gestión de tokens:** `podar_historial` elimina mensajes en pares cuando el historial supera 10 mensajes, evitando desbordamiento del contexto en conversaciones largas.
-- **Moderación en cascada:** antes de llegar al agente, cada pregunta pasa por tres capas — regex de keywords (gratis), clasificador ML TF-IDF (rápido, umbral 85% de confianza) y LLM (solo para casos ambiguos). Las preguntas fuera de ámbito se rechazan sin invocar el agente.
+- **Moderación en cascada:** antes de llegar al agente, cada pregunta pasa por tres capas — regex de keywords (gratis), clasificador ML TF-IDF (rápido, umbral 85% de confianza) y LLM ligero (solo para casos ambiguos). Las preguntas fuera de ámbito se rechazan sin invocar el agente.
 - **MemorySaver:** persiste el historial y el perfil del cliente entre turnos mediante `thread_id`.
+- **Dos LLMs diferenciados:** el agente principal usa modelos más capaces (`gemini-3-flash-preview` → `gemini-2.5-flash` → ...); moderación y LLM-as-Judge usan modelos ligeros en orden inverso (`gemini-3.1-flash-lite-preview` → `gemini-2.5-flash-lite` → ...) para preservar la cuota de los modelos potentes.
+- **Fallback automático modelo × clave:** ante un límite diario de API, el sistema rota primero a la siguiente clave API y, si todas las claves están agotadas para ese modelo, pasa automáticamente al siguiente modelo de la lista. El proceso es transparente y no interrumpe la ejecución.
 
 ### System prompt — justificación
 
