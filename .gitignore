@@ -3,6 +3,7 @@
 
 # Archivos internos de desarrollo
 CLAUDE.md
+.claude/
 .streamlit/secrets.toml
 notebooks/presentacion.ipynb
 
