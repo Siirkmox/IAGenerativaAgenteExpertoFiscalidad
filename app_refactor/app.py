@@ -1,17 +1,25 @@
 import datetime
+import sys
 import uuid
 from pathlib import Path
+
+# Añade app_refactor/ al path para que los imports planos funcionen
+# tanto en local (ejecutado desde la raíz) como en Streamlit Cloud
+# (ejecutado desde app_refactor/).
+_here = Path(__file__).parent
+if str(_here) not in sys.path:
+    sys.path.insert(0, str(_here))
 
 import pandas as pd
 import streamlit as st
 from langchain_core.messages import HumanMessage
 
-from app_refactor.services.agent_service import (
+from services.agent_service import (
     evaluar_respuesta,
     moderar_pregunta,
     run_agent,
 )
-from app_refactor.services.llm_service import _extraer_texto
+from services.llm_service import _extraer_texto
 
 # BASE_DIR apunta a la raíz del proyecto para leer el CSV del calendario
 BASE_DIR = Path(__file__).parent.parent

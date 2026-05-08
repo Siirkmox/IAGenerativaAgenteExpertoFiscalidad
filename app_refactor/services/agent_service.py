@@ -9,15 +9,15 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
 
-from app_refactor.agents.graph import construir_grafo
-from app_refactor.core.config import UMBRAL_CONFIANZA_ML
-from app_refactor.models.schemas import ResultadoModeracion
-from app_refactor.services.llm_service import (
+from agents.graph import construir_grafo
+from core.config import UMBRAL_CONFIANZA_ML
+from models.schemas import ResultadoModeracion
+from services.llm_service import (
     _extraer_texto,
     inicializar_llm,
     invoke_con_retry,
 )
-from app_refactor.utils.logger import logger
+from utils.logger import logger
 
 
 # ── Inicialización de LLMs ─────────────────────────────────────────────────────

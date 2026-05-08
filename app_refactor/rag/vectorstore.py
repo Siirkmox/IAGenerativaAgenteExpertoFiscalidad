@@ -7,14 +7,14 @@ from langchain_core.documents import Document
 from langchain_experimental.text_splitter import SemanticChunker
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from app_refactor.core.config import (
+from core.config import (
     BASE_DIR,
     CHROMA_DIR,
     COLLECTION_NAME,
     MANUAL_METADATA,
 )
-from app_refactor.rag.embeddings import embeddings
-from app_refactor.utils.logger import logger
+from rag.embeddings import embeddings
+from utils.logger import logger
 
 
 # ── Carga de PDFs ──────────────────────────────────────────────────────────────

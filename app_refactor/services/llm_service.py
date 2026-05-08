@@ -3,13 +3,13 @@ import time
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 
-from app_refactor.core.config import (
+from core.config import (
     GOOGLE_API_KEYS,
     MAX_RETRIES_RPM,
     MODELOS_AGENTE,
     MODELOS_LITE,
 )
-from app_refactor.utils.logger import logger
+from utils.logger import logger
 
 
 # ── Estado global de fallback ──────────────────────────────────────────────────

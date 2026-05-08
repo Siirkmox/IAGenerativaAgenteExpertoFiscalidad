@@ -1,7 +1,7 @@
 import re
 
-from app_refactor.models.schemas import AgentState
-from app_refactor.rag.vectorstore import vectorstore
+from models.schemas import AgentState
+from rag.vectorstore import vectorstore
 
 
 # ── Keywords para clasificar el tipo de consulta ───────────────────────────────

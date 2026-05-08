@@ -6,10 +6,10 @@ from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage, Syst
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 
-from app_refactor.core.config import MAX_MESSAGES, SYSTEM_PROMPT
-from app_refactor.models.schemas import AgentState
-from app_refactor.services.llm_service import _extraer_texto, invoke_con_retry
-from app_refactor.services.rag_service import (
+from core.config import MAX_MESSAGES, SYSTEM_PROMPT
+from models.schemas import AgentState
+from services.llm_service import _extraer_texto, invoke_con_retry
+from services.rag_service import (
     clasificar_consulta,
     recuperar_documentos,
     recuperar_general,

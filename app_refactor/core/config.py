@@ -18,7 +18,9 @@ while True:
     _i += 1
 
 # ── Rutas ──────────────────────────────────────────────────────────────────────
-# BASE_DIR apunta a la raíz del proyecto (un nivel arriba de app_refactor/)
+# BASE_DIR apunta a la raíz del proyecto (dos niveles arriba de core/config.py)
+# Cuando Streamlit ejecuta app_refactor/app.py, el cwd es app_refactor/,
+# por lo que subimos un nivel adicional para llegar a la raíz real del proyecto.
 BASE_DIR        = Path(__file__).parent.parent.parent
 CHROMA_DIR      = str(BASE_DIR / "chroma_db")
 COLLECTION_NAME = "base_fiscal"
