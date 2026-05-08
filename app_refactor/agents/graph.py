@@ -27,6 +27,8 @@ def podar_historial(state: AgentState) -> AgentState:
     n = len(mensajes) - MAX_MESSAGES
     if n % 2 != 0:
         n += 1  # eliminamos siempre pares user/assistant para no romper el historial
+    n = min(n, len(mensajes))
+    print(f"[Historial] Podados {n} mensajes antiguos. Quedan {len(mensajes) - n}.")
     return {"messages": [RemoveMessage(id=m.id) for m in mensajes[:n]]}
 
 
@@ -40,10 +42,12 @@ def detectar_perfil(state: AgentState) -> AgentState:
     if state.get("perfil"):
         return {}
     for msg in reversed(state["messages"]):
-        texto = msg.content
+        texto = msg.content if isinstance(msg.content, str) else ""
         if _KW_AUTO.search(texto):
+            print("[Perfil] Detectado: autónomo")
             return {"perfil": "autonomo"}
         if _KW_SOC.search(texto):
+            print("[Perfil] Detectado: sociedad")
             return {"perfil": "sociedad"}
     return {}
 

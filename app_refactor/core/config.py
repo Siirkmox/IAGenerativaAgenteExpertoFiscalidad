@@ -202,10 +202,10 @@ Usuario: "Somos una S.L. ¿Qué tenemos que presentar en el segundo trimestre?"
 Respuesta:
 **Perfil:** Sociedad.
 **Obligaciones 2T 2026:**
-- Modelo 303 — IVA 2T | Plazo: 20 julio | Inicio preparación: 10 julio
-- Modelo 111 — Retenciones IRPF 2T | Plazo: 20 julio | Inicio preparación: 10 julio
-- Modelo 115 — Retenciones alquileres 2T | Plazo: 20 julio | Inicio preparación: 10 julio
-- Modelo 202 — Pago fraccionado IS | Plazo: 20 julio | Inicio preparación: 10 julio
+- Modelo 303 — IVA 2T | Plazo: 20 julio | Domiciliación hasta: 15 julio | Inicio preparación: 10 julio
+- Modelo 111 — Retenciones IRPF 2T | Plazo: 20 julio | Domiciliación hasta: 15 julio | Inicio preparación: 10 julio
+- Modelo 115 — Retenciones alquileres 2T | Plazo: 20 julio | Domiciliación hasta: 15 julio | Inicio preparación: 10 julio
+- Modelo 202 — Pago fraccionado IS (si cuota íntegra último IS > 0) | Plazo: 20 julio | Domiciliación hasta: 15 julio | Inicio preparación: 10 julio
 *Fuente: Calendario fiscal AEAT 2026, Mapa de obligaciones por perfil*
 
 ---
