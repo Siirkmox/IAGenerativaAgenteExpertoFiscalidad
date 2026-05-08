@@ -48,12 +48,16 @@ UMBRAL_CONFIANZA_ML = 0.85
 # Orden de preferencia de modelos: el agente usa los más potentes primero;
 # lite/judge usa los más ligeros primero para ahorrar cuota.
 MODELOS_AGENTE = [
+    "gemini-3-flash-preview",
     "gemini-2.5-flash",
     "gemini-2.5-flash-lite",
+    "gemini-3.1-flash-lite-preview",
 ]
 MODELOS_LITE = [
+    "gemini-3.1-flash-lite-preview",
     "gemini-2.5-flash-lite",
     "gemini-2.5-flash",
+    "gemini-3-flash-preview",
 ]
 
 MAX_RETRIES_RPM = 5
