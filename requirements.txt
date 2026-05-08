@@ -1,6 +1,7 @@
 langchain
 langchain-google-genai
 langchain-community
+langchain-chroma
 langchain-text-splitters
 langchain-experimental
 scikit-learn

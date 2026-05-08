@@ -14,7 +14,7 @@ Agente de IA para gestorías españolas que asesora sobre obligaciones fiscales 
 | Entorno de desarrollo | Jupyter Notebook |
 | Interfaz (bonus) | Streamlit — [desplegada en Streamlit Cloud](https://agentexpertofiscalidad.streamlit.app/) |
 
-> **Nota sobre embeddings:** Se usa el modelo multilingüe de HuggingFace en lugar de Gemini Embeddings por dos razones: (1) los documentos fiscales incluyen texto en catalán y valenciano extraído de los PDFs de la AEAT, y el modelo `paraphrase-multilingual-MiniLM-L12-v2` maneja mejor la mezcla de idiomas; (2) al ejecutarse localmente elimina una dependencia de API externa en la fase de indexación, reduciendo costes y latencia.
+> **Nota sobre embeddings:** Se usa el modelo multilingüe de HuggingFace en lugar de Gemini Embeddings porque al ejecutarse localmente elimina una dependencia de API externa en la fase de indexación, reduciendo costes y latencia. El modelo `paraphrase-multilingual-MiniLM-L12-v2` también soporta consultas en cualquier idioma (castellano, catalán, euskera, gallego), ya que el agente responde en el idioma del usuario aunque los documentos estén en castellano.
 
 ---
 
@@ -132,10 +132,13 @@ START
 podar_historial       ← elimina mensajes si historial > 10 (RemoveMessage)
   │
   ▼
+detectar_perfil       ← infiere 'autonomo' o 'sociedad' del historial (SRP)
+  │
+  ▼
 clasificar_consulta   ← detecta tipo de pregunta por keywords
   │
   ├─► recuperar_plazos      (k=10 CSV + k=3 PDF) — preguntas de fechas y plazos
-  ├─► recuperar_documentos  (k=8 PDF + k=3 CSV)  — preguntas de cumplimentación
+  ├─► recuperar_documentos  (k=12 PDF + k=3 CSV) — preguntas de cumplimentación
   └─► recuperar_general     (k=5 PDF + k=6 CSV)  — mezcla balanceada
          │
          ▼
@@ -145,12 +148,14 @@ clasificar_consulta   ← detecta tipo de pregunta por keywords
         END
 ```
 
+- **Nodo `detectar_perfil` (SRP):** la detección del perfil del cliente (autónomo/sociedad) se realiza en un nodo dedicado antes del routing, respetando el principio de responsabilidad única. El perfil se propaga al contexto RAG para filtrar documentos relevantes.
 - **Routing condicional:** la pregunta se clasifica por keywords antes de recuperar contexto. Las preguntas de plazos priorizan los CSVs del calendario; las de cumplimentación priorizan los manuales PDF; el resto usa una mezcla balanceada.
 - **Gestión de tokens:** `podar_historial` elimina mensajes en pares cuando el historial supera 10 mensajes, evitando desbordamiento del contexto en conversaciones largas.
 - **Moderación en cascada:** antes de llegar al agente, cada pregunta pasa por tres capas — regex de keywords (gratis), clasificador ML TF-IDF (rápido, umbral 85% de confianza) y LLM ligero (solo para casos ambiguos). Las preguntas fuera de ámbito se rechazan sin invocar el agente.
 - **MemorySaver:** persiste el historial y el perfil del cliente entre turnos mediante `thread_id`.
-- **Dos LLMs diferenciados:** el agente principal usa modelos más capaces (`gemini-3-flash-preview` → `gemini-2.5-flash` → ...); moderación y LLM-as-Judge usan modelos ligeros en orden inverso (`gemini-3.1-flash-lite-preview` → `gemini-2.5-flash-lite` → ...) para preservar la cuota de los modelos potentes.
+- **Dos LLMs diferenciados:** el agente principal usa modelos más capaces (`gemini-3-flash-preview` → `gemini-2.5-flash` → `gemini-2.5-flash-lite` → `gemini-3.1-flash-lite-preview`); moderación y LLM-as-Judge usan el orden inverso para preservar la cuota de los modelos potentes.
 - **Fallback automático modelo × clave:** ante un límite diario de API, el sistema rota primero a la siguiente clave API y, si todas las claves están agotadas para ese modelo, pasa automáticamente al siguiente modelo de la lista. El proceso es transparente y no interrumpe la ejecución.
+- **Detección de idioma:** el agente responde en el idioma del usuario (castellano, catalán, euskera, gallego, inglés, etc.) independientemente del idioma de los documentos recuperados.
 
 ### System prompt — justificación
 
@@ -168,8 +173,8 @@ Sin una estructura definida, el modelo varía el orden y el formato en cada resp
 **4. Lógica de antelación como propuesta de valor**
 El agente no solo informa del plazo límite: calcula la fecha recomendada de inicio de preparación restando `dias_preparacion_recomendados` del calendario. Esta es la funcionalidad diferencial para una gestoría — avisar con suficiente margen según la complejidad de cada modelo.
 
-**5. Five-shot examples en el propio prompt**
-Los cinco ejemplos anclan el formato exacto de respuesta y el comportamiento esperado en los casos más frecuentes: perfil conocido con plazo, perfil desconocido, cumplimentación de casilla, obligaciones de un trimestre e información no disponible. Sin ejemplos, el modelo interpreta las instrucciones de forma variable; con ellos, el formato se estabiliza desde la primera respuesta.
+**5. Few-shot examples en el propio prompt (13 ejemplos)**
+Los trece ejemplos anclan el formato exacto de respuesta y el comportamiento esperado en los casos más frecuentes: perfil conocido con plazo, perfil desconocido, cumplimentación de casilla, obligaciones de un trimestre, información no disponible, pasos de procedimiento, pregunta de seguimiento, información parcial, corrección de error del usuario, pregunta mixta, modelo no aplicable al perfil, y respuesta en catalán y euskera. Sin ejemplos, el modelo interpreta las instrucciones de forma variable; con ellos, el formato se estabiliza desde la primera respuesta.
 
 **6. temperature=0 en el LLM**
 Un agente fiscal debe dar siempre la misma respuesta ante la misma pregunta. Con temperature > 0 existe variabilidad en fechas, porcentajes o nombres de modelos, lo que erosiona la confianza del usuario. Se fijó a 0 para garantizar determinismo total.
@@ -178,7 +183,9 @@ Un agente fiscal debe dar siempre la misma respuesta ante la misma pregunta. Con
 
 ## Casos de prueba
 
-El notebook incluye 5 casos documentados en la sección **Demo interactiva** (sección 9):
+El notebook incluye casos documentados en dos secciones:
+
+**Sección 9 — Casos de prueba básicos (5 casos):**
 
 | Caso | Pregunta | Demuestra |
 |---|---|---|
@@ -187,6 +194,13 @@ El notebook incluye 5 casos documentados en la sección **Demo interactiva** (se
 | 3 | Obligaciones autónomo 1T | Filtrado por perfil + calendario |
 | 4 | Obligaciones sociedad 2T | Cambio de perfil en la misma sesión |
 | 5 | ¿Cuándo empezar a preparar? | Memoria de conversación + lógica de antelación |
+
+**Sección 10 — Demo de presentación (2 escenarios, 4 preguntas cada uno):**
+
+| Escenario | Preguntas | Demuestra |
+|---|---|---|
+| A — Autónomo 1T | Obligaciones 1T → plazo 130 → casilla 03 → retenciones (encadenada) | Pipeline completo + memoria entre turnos |
+| B — Sociedad cierre | Obligaciones 4T → modelo 200 anual → modelo 202 → cálculo base (encadenada) | Cierre de ejercicio + IS + memoria |
 
 ---
 

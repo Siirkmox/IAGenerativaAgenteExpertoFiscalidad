@@ -14,7 +14,7 @@ import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
 from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.vectorstores import Chroma
+from langchain_chroma import Chroma
 from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage, SystemMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
@@ -69,8 +69,9 @@ Si te preguntan algo que no es fiscal (contabilidad general, derecho laboral, et
 
 ## IDIOMA
 
-Detecta el idioma en que escribe el usuario y responde siempre en ese mismo idioma.
-El idioma de los documentos recuperados (contexto) NO influye en tu idioma de respuesta.
+Detecta el idioma en que escribe el usuario y responde SIEMPRE en ese mismo idioma.
+Esto incluye lenguas cooficiales españolas: si el usuario escribe en catalán, responde en catalán; en euskera, en euskera; en gallego, en gallego.
+El idioma de los documentos recuperados (contexto RAG) NO influye en tu idioma de respuesta — los documentos son siempre en castellano pero tú respondes en el idioma del usuario.
 
 ## FUENTES Y JERARQUÍA
 
@@ -125,6 +126,7 @@ Nunca incluyas secciones vacías ni encabezados sin contenido. Si la pregunta so
   - Modelos anuales simples (390, 347): 15 días antes del plazo
   - Modelos anuales complejos (100, 200): 30 días antes del plazo
 - Cuando informes de un plazo, calcula y muestra siempre la fecha de inicio de preparación.
+- **DOMICILIACIÓN — REGLA OBLIGATORIA:** Si el contexto RAG incluye el campo `domiciliacion_hasta` para el modelo consultado, muéstralo SIEMPRE en la respuesta con el formato "Domiciliación hasta: [fecha]", inmediatamente después de la fecha límite. La domiciliación bancaria adelanta el plazo efectivo de pago y es información crítica para el cliente. Nunca la omitas si está disponible en el contexto.
 - Si el usuario pregunta "¿qué tengo pendiente?", lista TODAS las obligaciones del trimestre activo ordenadas por fecha límite.
 
 ## CORRECCIÓN DE ERRORES DEL USUARIO
@@ -625,6 +627,21 @@ def cargar_recursos():
             n += 1
         return {"messages": [RemoveMessage(id=m.id) for m in mensajes[:n]]}
 
+    # ── Nodo: detección de perfil ──
+    _KW_AUTO = re.compile(r"\baut[oó]nomo\b", re.IGNORECASE)
+    _KW_SOC  = re.compile(r"\b(sociedad|empresa|s\.l|s\.a)\b", re.IGNORECASE)
+
+    def detectar_perfil(state: AgentState) -> AgentState:
+        if state.get("perfil"):
+            return {}
+        for msg in reversed(state["messages"]):
+            texto = msg.content
+            if _KW_AUTO.search(texto):
+                return {"perfil": "autonomo"}
+            if _KW_SOC.search(texto):
+                return {"perfil": "sociedad"}
+        return {}
+
     # ── Nodo: clasificación de consulta ──
     def clasificar_consulta(state: AgentState) -> AgentState:
         ultima = state["messages"][-1].content
@@ -716,25 +733,12 @@ def cargar_recursos():
         )))
         respuesta = _invoke_con_retry(llm, messages, tipo="agente")
 
-        perfil_actual = state.get("perfil", "")
-        if not perfil_actual:
-            # Buscar perfil en todo el historial, del más reciente al más antiguo
-            _KW_AUTO = re.compile(r"\baut[oó]nomo\b", re.IGNORECASE)
-            _KW_SOC  = re.compile(r"\b(sociedad|empresa|s\.l|s\.a)\b", re.IGNORECASE)
-            for msg in reversed(historial):
-                texto = msg.content.lower()
-                if _KW_AUTO.search(texto):
-                    perfil_actual = "autonomo"
-                    break
-                if _KW_SOC.search(texto):
-                    perfil_actual = "sociedad"
-                    break
-
-        return {"messages": [AIMessage(content=respuesta.content)], "perfil": perfil_actual}
+        return {"messages": [AIMessage(content=_extraer_texto(respuesta))], "perfil": state.get("perfil", "")}
 
     # ── Construcción del grafo ──
     workflow = StateGraph(AgentState)
     workflow.add_node("podar_historial",      podar_historial)
+    workflow.add_node("detectar_perfil",      detectar_perfil)
     workflow.add_node("clasificar_consulta",  clasificar_consulta)
     workflow.add_node("recuperar_plazos",     recuperar_plazos)
     workflow.add_node("recuperar_documentos", recuperar_documentos)
@@ -742,7 +746,8 @@ def cargar_recursos():
     workflow.add_node("generar_respuesta",    generar_respuesta)
 
     workflow.add_edge(START, "podar_historial")
-    workflow.add_edge("podar_historial", "clasificar_consulta")
+    workflow.add_edge("podar_historial", "detectar_perfil")
+    workflow.add_edge("detectar_perfil", "clasificar_consulta")
     workflow.add_conditional_edges(
         "clasificar_consulta", router,
         {
