@@ -4,6 +4,7 @@
 # Archivos internos de desarrollo
 CLAUDE.md
 .streamlit/secrets.toml
+notebooks/presentacion.ipynb
 
 # Vector DB — incluida en el repo para despliegue directo en Streamlit Cloud
 # chroma_db/
