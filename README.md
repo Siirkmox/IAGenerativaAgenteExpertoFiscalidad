@@ -25,7 +25,14 @@ Projecto-7-IAGenerativa/
 ├── .env                              # API keys (no subir a GitHub)
 ├── .gitignore
 ├── requirements.txt
-├── app.py                            # Interfaz Streamlit (bonus)
+├── app_refactor/                     # Interfaz Streamlit (bonus) — arquitectura modular
+│   ├── app.py                        # Punto de entrada Streamlit
+│   ├── agents/                       # Grafo LangGraph
+│   ├── core/                         # Configuración
+│   ├── models/                       # Schemas Pydantic
+│   ├── rag/                          # Embeddings y vectorstore
+│   ├── services/                     # Servicios LLM, RAG y agente
+│   └── utils/                        # Logger
 ├── data/
 │   ├── calendario_fiscal.csv         # Plazos 2026 extraídos del calendario oficial AEAT
 │   ├── obligaciones_perfil.csv       # Mapa de modelos obligatorios por tipo de contribuyente
@@ -36,10 +43,9 @@ Projecto-7-IAGenerativa/
 │       │   ├── manual_renta_100_130_2025_parte2.pdf
 │       │   ├── manual_sociedades_200_202_2024.pdf
 │       │   └── manual_actividades_economicas_111_115.pdf
-│       ├── web/es/                   # Manuales de aplicaciones web AEAT
-│       │   ├── manual_rentaweb_100_2024.pdf
-│       │   └── manual_sociedadesweb_200_2024.pdf
-│       └── leyes/                    # Leyes IVA, IRPF e IS como soporte
+│       └── web/es/                   # Manuales de aplicaciones web AEAT
+│           ├── manual_rentaweb_100_2024.pdf
+│           └── manual_sociedadesweb_200_2024.pdf
 ├── chroma_db/                        # Base vectorial persistida (incluida en el repo)
 ├── notebooks/
 │   └── agente_fiscal.ipynb           # Notebook principal entregable
@@ -92,7 +98,7 @@ Ejecuta las celdas en orden. La base vectorial (`chroma_db/`) ya está incluida 
 ### 5. (Opcional) Ejecutar la interfaz Streamlit en local
 
 ```bash
-streamlit run app.py
+streamlit run app_refactor/app.py
 ```
 
 ---

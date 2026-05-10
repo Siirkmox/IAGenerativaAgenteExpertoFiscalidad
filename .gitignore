@@ -1,13 +1,16 @@
 # Secrets
 .env
+.streamlit/secrets.toml
 
 # Archivos internos de desarrollo
 CLAUDE.md
 .claude/
-.streamlit/secrets.toml
+.devcontainer/
 
-# Vector DB — incluida en el repo para despliegue directo en Streamlit Cloud
-# chroma_db/
+# PDFs de referencia y leyes (pesados, no forman parte del pipeline RAG)
+data/manuales/leyes/
+PDFs/Calendario/
+PDFs/*.pdf
 
 # Python
 __pycache__/
@@ -23,6 +26,3 @@ env/
 # OS
 .DS_Store
 Thumbs.db
-
-# PDFs opcionales (pesados — subir solo si hay espacio en repo)
-# data/manuales/
