@@ -23,6 +23,9 @@ env/
 # Jupyter checkpoints
 .ipynb_checkpoints/
 
+# Presentación (gestionar localmente)
+Presentacion_Asistente_Fiscal.pptx
+
 # OS
 .DS_Store
 Thumbs.db
